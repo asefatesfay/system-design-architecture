@@ -773,26 +773,6 @@ graph LR
     style C fill:#87CEEB
     style D fill:#DDA0DD
     style E fill:#F0E68C
-``` loop Every 5 seconds
-        Driver->>Gateway: Send location<br/>{driver_id, lat, lon, timestamp}
-        Gateway->>LocationSvc: Update location
-        
-        LocationSvc->>LocationSvc: Check if moved > 50m
-        
-        alt Significant movement
-            LocationSvc->>Redis: GEOADD drivers {lon} {lat} {driver_id}
-            LocationSvc->>Redis: EXPIRE drivers:{driver_id} 300
-        else No significant movement
-            LocationSvc->>LocationSvc: Skip update
-        end
-    end
-    
-    Rider->>Gateway: Search nearby drivers<br/>{lat, lon, radius: 2000m}
-    Gateway->>LocationSvc: Find nearby
-    LocationSvc->>Redis: GEORADIUS drivers {lon} {lat} 2000m
-    Redis-->>LocationSvc: [driver1: 500m, driver2: 1200m]
-    LocationSvc-->>Gateway: Available drivers
-    Gateway-->>Rider: Show drivers on map
 ```
 
 ---
