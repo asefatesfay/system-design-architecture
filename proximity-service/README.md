@@ -2,6 +2,15 @@
 
 A service to find nearby places/businesses based on user location (similar to Yelp, Google Maps, Uber driver matching).
 
+## 📁 Files in this Directory
+
+| File | Description |
+|------|-------------|
+| [README.md](README.md) | Complete system design documentation |
+| [openapi.yaml](openapi.yaml) | OpenAPI 3.0 specification (machine-readable) |
+| [OPENAPI_GUIDE.md](OPENAPI_GUIDE.md) | How to use the OpenAPI spec |
+| [client_example.py](client_example.py) | Python client usage examples |
+
 ## Table of Contents
 - [Functional Requirements](#functional-requirements)
 - [Non-Functional Requirements](#non-functional-requirements)
@@ -179,6 +188,44 @@ With read replicas: 5 primary + 15 read replicas
 ---
 
 ## API Design
+
+### OpenAPI 3.0 Specification
+
+> **Full spec:** [openapi.yaml](openapi.yaml)  
+> **Usage guide:** [OPENAPI_GUIDE.md](OPENAPI_GUIDE.md)  
+> **Try online:** [Swagger Editor](https://editor.swagger.io/) (import openapi.yaml)
+
+**Quick Overview:**
+```yaml
+openapi: 3.0.0
+info:
+  title: Proximity Service API
+  version: 1.0.0
+  description: Find nearby places based on location
+servers:
+  - url: https://api.proximity.example.com/v1
+    description: Production
+  - url: https://api-staging.proximity.example.com/v1
+    description: Staging
+```
+
+**Interactive Documentation:**
+- **Swagger UI:** `https://api.proximity.example.com/docs`
+- **ReDoc:** `https://api.proximity.example.com/redoc`
+- **Postman Collection:** Import OpenAPI spec directly
+
+**Getting Started:**
+```bash
+# View docs locally
+docker run -p 8080:8080 -v $(pwd):/app -e SWAGGER_JSON=/app/openapi.yaml swaggerapi/swagger-ui
+open http://localhost:8080
+
+# Generate Python client
+openapi-generator-cli generate -i openapi.yaml -g python -o ./client
+
+# Validate API responses
+prism mock openapi.yaml -p 8080
+```
 
 ### RESTful API
 
@@ -395,6 +442,34 @@ POST /v1/places/search-area
 {
   "polygon": [
     {"latitude": 37.7749, "longitude": -122.4194},
+### Benefits of OpenAPI
+
+```mermaid
+graph LR
+    OpenAPI[OpenAPI Spec<br/>openapi.yaml]
+    
+    OpenAPI --> SwaggerUI[Swagger UI<br/>Interactive Docs]
+    OpenAPI --> ReDoc[ReDoc<br/>Beautiful Docs]
+    OpenAPI --> Postman[Postman<br/>Collection Import]
+    OpenAPI --> ClientSDK[Client SDK<br/>Generation]
+    OpenAPI --> ServerStub[Server Stub<br/>Generation]
+    OpenAPI --> Validation[Request/Response<br/>Validation]
+    OpenAPI --> Testing[Automated<br/>API Testing]
+    OpenAPI --> Mock[Mock Server<br/>Prism/Stoplight]
+    
+    style OpenAPI fill:#4CAF50
+    style SwaggerUI fill:#FF9800
+    style ClientSDK fill:#2196F3
+    style Validation fill:#9C27B0
+```
+
+**Key Benefits:**
+- 📖 **Auto-generated docs** - No manual doc updates
+- 🔧 **SDK generation** - Python, Java, JavaScript clients
+- ✅ **Validation** - Request/response validation at runtime
+- 🧪 **Testing** - Contract testing, mock servers
+- 🤝 **Team collaboration** - Single source of truth
+
     {"latitude": 37.7849, "longitude": -122.4094},
     {"latitude": 37.7649, "longitude": -122.4094}
   ],
@@ -1508,4 +1583,39 @@ mmdc -i README.md -o diagrams/architecture.svg
 - Export as SVG for crisp scaling
 - Use Mermaid Live Editor to customize colors
 - Screenshots work for quick sharing
+
+---
+
+## OpenAPI Workflow
+
+```mermaid
+graph TB
+    Start[Write OpenAPI Spec<br/>openapi.yaml]
+    
+    Start --> Validate[Validate<br/>spectral lint]
+    Start --> Docs[Generate Docs<br/>Swagger UI / ReDoc]
+    Start --> ClientGen[Generate Clients<br/>Python, JS, Java, Go]
+    Start --> ServerGen[Generate Server Stubs<br/>Express, Flask, Spring]
+    Start --> Mock[Mock Server<br/>Prism]
+    Start --> Test[Contract Testing<br/>Dredd]
+    
+    Validate --> CI[CI/CD Pipeline]
+    Docs --> Deploy[Deploy Docs<br/>GitHub Pages]
+    ClientGen --> SDK[SDK Distribution<br/>npm, PyPI]
+    ServerGen --> Implement[Implement Handlers]
+    Mock --> ParallelDev[Parallel Development<br/>Frontend + Backend]
+    Test --> QA[Automated QA]
+    
+    CI --> Pass{Tests Pass?}
+    Pass -->|Yes| Release[Release to Production]
+    Pass -->|No| Fix[Fix Issues]
+    Fix --> Start
+    
+    style Start fill:#4CAF50
+    style Docs fill:#FF9800
+    style ClientGen fill:#2196F3
+    style Mock fill:#9C27B0
+    style Release fill:#4CAF50
+```
+
 
