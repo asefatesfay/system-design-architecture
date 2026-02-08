@@ -499,22 +499,22 @@ graph LR
 
 ```mermaid
 graph TB
-    Client["Mobile/Web Clients"]
-    LB["Load Balancer<br/>NGINX/AWS ALB"]
-    API1["API Server 1"]
-    API2["API Server 2"]
-    API3["API Server N"]
+    Client[Mobile and Web Clients]
+    LB[Load Balancer<br/>NGINX or AWS ALB]
+    API1[API Server 1]
+    API2[API Server 2]
+    API3[API Server N]
     
-    Cache["(Redis Cache<br/>Geospatial Index)"]
-    GeoIndex["In-Memory<br/>Geospatial Service<br/>QuadTree/Geohash"]
+    Cache[(Redis Cache<br/>Geospatial Index)]
+    GeoIndex[In-Memory<br/>Geospatial Service<br/>QuadTree or Geohash]
     
-    DBPrimary["(PostgreSQL Primary<br/>PostGIS)"]
-    DBReplica1["(Read Replica 1<br/>North America)"]
-    DBReplica2["(Read Replica 2<br/>Europe)"]
-    DBReplica3["(Read Replica 3<br/>Asia)"]
+    DBPrimary[(PostgreSQL Primary<br/>PostGIS)]
+    DBReplica1[(Read Replica 1<br/>North America)]
+    DBReplica2[(Read Replica 2<br/>Europe)]
+    DBReplica3[(Read Replica 3<br/>Asia)]
     
-    CDN["CDN<br/>CloudFront/CloudFlare"]
-    S3["(S3<br/>Place Photos)"]
+    CDN[CDN<br/>CloudFront or CloudFlare]
+    S3[(S3<br/>Place Photos)]
     
     Client --> LB
     LB --> API1
@@ -529,21 +529,21 @@ graph TB
     API2 --> GeoIndex
     API3 --> GeoIndex
     
-    API1 -.->|"Writes"| DBPrimary
-    API2 -.->|"Writes"| DBPrimary
-    API3 -.->|"Writes"| DBPrimary
+    API1 -.->|Writes| DBPrimary
+    API2 -.->|Writes| DBPrimary
+    API3 -.->|Writes| DBPrimary
     
-    API1 -->|"Reads"| DBReplica1
-    API2 -->|"Reads"| DBReplica2
-    API3 -->|"Reads"| DBReplica3
+    API1 -->|Reads| DBReplica1
+    API2 -->|Reads| DBReplica2
+    API3 -->|Reads| DBReplica3
     
-    DBPrimary -.->|"Replication"| DBReplica1
-    DBPrimary -.->|"Replication"| DBReplica2
-    DBPrimary -.->|"Replication"| DBReplica3
+    DBPrimary -.->|Replication| DBReplica1
+    DBPrimary -.->|Replication| DBReplica2
+    DBPrimary -.->|Replication| DBReplica3
     
-    GeoIndex -.->|"Sync every 5min"| DBReplica1
+    GeoIndex -.->|Sync every 5min| DBReplica1
     
-    Client -->|"Static Content"| CDN
+    Client -->|Static Content| CDN
     CDN --> S3
     
     style Client fill:#e1f5ff
