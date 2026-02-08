@@ -726,7 +726,22 @@ sequenceDiagram
     Driver->>Gateway: WebSocket connect
     Gateway-->>Driver: Connected
     
-   
+    loop Every 5 seconds
+        Driver->>Gateway: Update location<br/>{lat, lon, driver_id}
+        Gateway->>LocationSvc: Process location
+        LocationSvc->>Redis: GEOADD drivers {lon} {lat} {driver_id}
+        Redis-->>LocationSvc: OK
+    end
+    
+    Rider->>LocationSvc: GET /drivers/nearby<br/>{lat, lon, radius}
+    LocationSvc->>Redis: GEORADIUS drivers {lon} {lat} {radius}
+    Redis-->>LocationSvc: [{driver_id, distance}]
+    LocationSvc-->>Rider: Nearby drivers
+    
+    Note over Redis: TTL: 5 minutes<br/>Auto-expire old locations
+```
+
+---
 
 ### Geospatial Indexing Comparison
 
@@ -1007,7 +1022,15 @@ graph TD
     
     style Start fill:#e1f5ff
     style GetPlaces fill:#90EE90
-    style Return fill:#90EE90ude into a short string
+    style Return fill:#90EE90
+```
+
+---
+
+### Approach 1: Geohash
+
+**What is Geohash?**
+- Encode coordinates into a short string
 - Similar locations have similar prefixes
 - Hierarchical: longer geohash = more precise
 
@@ -1139,54 +1162,80 @@ class QuadTreeNode:
             return False
         
         # If capacity not reached, add here
-   mermaid
-graph TB
-    subgraph "Global Router"
-        Router[Query Router<br/>Determines shard by lat/lon]
-    end
-    
-    subgraph "Shard 1: North America"
-        DB1[(PostgreSQL<br/>North America<br/>lat: 15°N to 85°N<br/>lon: -170°W to -50°W)]
-        Replica1[(Read Replicas)]
-    end
-    
-    subgraph "Shard 2: Europe"
-        DB2[(PostgreSQL<br/>Europe<br/>lat: 35°N to 71°N<br/>lon: -10°W to 40°E)]
-        Replica2[(Read Replicas)]
-    end
-    
-    subgraph "Shard 3: Asia"
-        DB3[(PostgreSQL<br/>Asia<br/>lat: -10°S to 55°N<br/>lon: 60°E to 145°E)]
-        Replica3[(Read Replicas)]
-    end
-   mermaid
+        if len(self.places) < self.capacity:
+            self.places.append(place)
+            return True
+        
+        # Otherwise, subdivide and add
+        if not self.divided:
+            self.subdivide()
+        
+        # Try to insert into children
+        if self.northwest.insert(place): return True
+        if self.northeast.insert(place): return True
+        if self.southwest.insert(place): return True
+        if self.southeast.insert(place): return True
+        
+        return False  # Should never reach here
+```
+
+**Pros/Cons:**
+
+✅ Fast for sparse data  
+✅ Automatically adapts to data density  
+✅ Good for arbitrary radiuses  
+❌ Complex to implement  
+❌ Requires rebuilding on updates  
+❌ Memory intensive for dense areas
+
+---
+
+### Approach Comparison
+
+| Feature | Geohash | QuadTree |
+|---------|---------|----------|
+| **Implementation** | Simple | Complex |
+| **Search Speed** | O(log n) | O(log n) |
+| **Update Speed** | O(1) | O(log n) |
+| **Memory Usage** | Low | Medium-High |
+| **Boundary Issues** | Yes (check neighbors) | Minimal |
+| **Best For** | Redis-backed systems | In-memory services |
+| **Recommended** | ✅ For most cases | Advanced use cases |
+
+**Recommendation:** Use **Geohash with Redis** for simplicity and scalability.
+
+---
+
+### Multi-Level Caching Architecture
+
+```mermaid
 graph TD
-    Client[Client Request<br/>GET /v1/places/nearby]
+    Client["Client Request<br/>GET /v1/places/nearby"]
     
-    L1{Level 1:<br/>Application<br/>In-Memory Cache<br/>TTL: 1min}
-    L2{Level 2:<br/>Redis Cache<br/>TTL: 5min}
-    L3{Level 3:<br/>Database<br/>PostGIS}
+    L1{"Level 1:<br/>Application<br/>In-Memory Cache<br/>TTL: 1min"}
+    L2{"Level 2:<br/>Redis Cache<br/>TTL: 5min"}
+    L3{"Level 3:<br/>Database<br/>PostGIS"}
     
-    CDN{CDN Cache<br/>Static Content<br/>TTL: 1hr}
-    S3[(S3<br/>Place Photos)]
+    CDN{"CDN Cache<br/>Static Content<br/>TTL: 1hr"}
+    S3["(S3<br/>Place Photos)"]
     
     Client --> L1
     
-    L1 -->|Cache Hit<br/>~5% requests| Return1[Return<br/>< 1ms]
-    L1 -->|Cache Miss| L2
+    L1 -->|"Cache Hit<br/>~5% requests"| Return1["Return<br/>< 1ms"]
+    L1 -->|"Cache Miss"| L2
     
-    L2 -->|Cache Hit<br/>~75% requests| Return2[Return<br/>< 10ms]
-    L2 -->|Cache Miss| L3
+    L2 -->|"Cache Hit<br/>~75% requests"| Return2["Return<br/>< 10ms"]
+    L2 -->|"Cache Miss"| L3
     
-    L3 -->|Database Query<br/>~20% requests| Return3[Return<br/>< 50ms]
+    L3 -->|"Database Query<br/>~20% requests"| Return3["Return<br/>< 50ms"]
     
-    L3 --> UpdateL2[Update L2 Cache]
-    UpdateL2 --> UpdateL1[Update L1 Cache]
+    L3 --> UpdateL2["Update L2 Cache"]
+    UpdateL2 --> UpdateL1["Update L1 Cache"]
     
-    Client -.->|Photos| CDN
-    CDN -->|Hit| ReturnCDN[Return from CDN]
-    CDN -->|Miss| S3
-    S3 --> CDNUpdate[Update CDN]
+    Client -.->|"Photos"| CDN
+    CDN -->|"Hit"| ReturnCDN["Return from CDN"]
+    CDN -->|"Miss"| S3
+    S3 --> CDNUpdate["Update CDN"]
     
     style Return1 fill:#90EE90
     style Return2 fill:#FFD700
@@ -1201,6 +1250,10 @@ graph TD
 Level 1 (App): "nearby:{lat}:{lon}:{radius}"
 Level 2 (Redis): "nearby:{lat_rounded}:{lon_rounded}:{radius}"
   - Round lat/lon to 2 decimal places (~1km precision)
+```
+
+---
+
 ### Scaling Strategy
 
 ```mermaid
@@ -1254,10 +1307,62 @@ graph LR
     style C1 fill:#FF6B6B
 ```
 
-  - Increases cache hit rate
+**Key Improvements per Phase:**
 
-Place details: "place:{place_id}"
-Popular places: "popular:places" (sorted set by access count)
+**Phase 1 (MVP):**
+- Single server, single database
+- Simple to deploy
+- Good for 0-1K QPS
+
+**Phase 2 (Growth):**
+- Load balancer for high availability
+- Redis cache (80% hit rate)
+- Read replica for read scaling
+- Good for 1K-5K QPS
+
+**Phase 3 (Scale):**
+- Auto-scaling API servers
+- Redis cluster for distributed caching
+- Database sharding by geographic region
+- CDN for static content
+- Good for 5K-20K+ QPS
+
+---
+
+### Database Sharding Architecture
+
+```mermaid
+graph TB
+    subgraph "Global Router"
+        Router["Query Router<br/>Determines shard by lat/lon"]
+    end
+    
+    subgraph "Shard 1: North America"
+        DB1["(PostgreSQL<br/>North America<br/>lat: 15°N to 85°N<br/>lon: -170°W to -50°W)"]
+        Replica1["(Read Replicas)"]
+    end
+    
+    subgraph "Shard 2: Europe"
+        DB2["(PostgreSQL<br/>Europe<br/>lat: 35°N to 71°N<br/>lon: -10°W to 40°E)"]
+        Replica2["(Read Replicas)"]
+    end
+    
+    subgraph "Shard 3: Asia"
+        DB3["(PostgreSQL<br/>Asia<br/>lat: -10°S to 55°N<br/>lon: 60°E to 145°E)"]
+        Replica3["(Read Replicas)"]
+    end
+    
+    subgraph "Shard 4: Rest of World"
+        DB4["(PostgreSQL<br/>Rest of World<br/>Other regions)"]
+        Replica4["(Read Replicas)"]
+    end
+    
+    Router --> DB1
+    Router --> DB2
+    Router --> DB3
+    Router --> DB4
+    
+    DB1 --> Replica1
     DB2 --> Replica2
     DB3 --> Replica3
     DB4 --> Replica4
@@ -1271,12 +1376,42 @@ Popular places: "popular:places" (sorted set by access count)
 
 **Benefits:**
 - Most queries stay within one shard
-- Easy to understand
-- Natural data isolation
+- Easy to understand and manage
+- Natural data isolation by geography
 
 **Challenges:**
-- Uneven load (more places in cities)
-- Cross-region searches (rare) def subdivide(self):
+- Uneven load (more places in dense cities)
+- Cross-region searches (rare but need to query multiple shards)
+
+**Cache Strategy:**
+```
+Level 1 (App): "nearby:{lat_rounded}:{lon_rounded}:{radius}"
+  - Round lat/lon to 2 decimal places (~1km precision)
+  - Increases cache hit rate
+
+Level 2 (Redis): 
+  - Place details: "place:{place_id}"
+  - Popular places: "popular:places" (sorted set by access count)
+  - Geospatial index: GEOADD places {lon} {lat} {place_id}
+```
+
+---
+
+### QuadTree Complete Implementation
+
+```python
+class QuadTreeNode:
+    def __init__(self, boundary, capacity=50):
+        self.boundary = boundary  # (min_lat, max_lat, min_lon, max_lon)
+        self.capacity = capacity
+        self.places = []
+        self.divided = False
+        self.northwest = None
+        self.northeast = None
+        self.southwest = None
+        self.southeast = None
+    
+    def subdivide(self):
         min_lat, max_lat, min_lon, max_lon = self.boundary
         mid_lat = (min_lat + max_lat) / 2
         mid_lon = (min_lon + max_lon) / 2
