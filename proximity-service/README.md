@@ -227,6 +227,38 @@ openapi-generator-cli generate -i openapi.yaml -g python -o ./client
 prism mock openapi.yaml -p 8080
 ```
 
+---
+
+### Benefits of OpenAPI
+
+```mermaid
+graph LR
+    OpenAPI[OpenAPI Spec<br/>openapi.yaml]
+    
+    OpenAPI --> SwaggerUI[Swagger UI<br/>Interactive Docs]
+    OpenAPI --> ReDoc[ReDoc<br/>Beautiful Docs]
+    OpenAPI --> Postman[Postman<br/>Collection Import]
+    OpenAPI --> ClientSDK[Client SDK<br/>Generation]
+    OpenAPI --> ServerStub[Server Stub<br/>Generation]
+    OpenAPI --> Validation[Request/Response<br/>Validation]
+    OpenAPI --> Testing[Automated<br/>API Testing]
+    OpenAPI --> Mock[Mock Server<br/>Prism/Stoplight]
+    
+    style OpenAPI fill:#4CAF50
+    style SwaggerUI fill:#FF9800
+    style ClientSDK fill:#2196F3
+    style Validation fill:#9C27B0
+```
+
+**Key Benefits:**
+- 📖 **Auto-generated docs** - No manual doc updates
+- 🔧 **SDK generation** - Python, Java, JavaScript clients
+- ✅ **Validation** - Request/response validation at runtime
+- 🧪 **Testing** - Contract testing, mock servers
+- 🤝 **Team collaboration** - Single source of truth
+
+---
+
 ### RESTful API
 
 #### 1. Search Nearby Places
@@ -442,43 +474,23 @@ POST /v1/places/search-area
 {
   "polygon": [
     {"latitude": 37.7749, "longitude": -122.4194},
-### Benefits of OpenAPI
-
-```mermaid
-graph LR
-    OpenAPI[OpenAPI Spec<br/>openapi.yaml]
-    
-    OpenAPI --> SwaggerUI[Swagger UI<br/>Interactive Docs]
-    OpenAPI --> ReDoc[ReDoc<br/>Beautiful Docs]
-    OpenAPI --> Postman[Postman<br/>Collection Import]
-    OpenAPI --> ClientSDK[Client SDK<br/>Generation]
-    OpenAPI --> ServerStub[Server Stub<br/>Generation]
-    OpenAPI --> Validation[Request/Response<br/>Validation]
-    OpenAPI --> Testing[Automated<br/>API Testing]
-    OpenAPI --> Mock[Mock Server<br/>Prism/Stoplight]
-    
-    style OpenAPI fill:#4CAF50
-    style SwaggerUI fill:#FF9800
-    style ClientSDK fill:#2196F3
-    style Validation fill:#9C27B0
-```
-
-**Key Benefits:**
-- 📖 **Auto-generated docs** - No manual doc updates
-- 🔧 **SDK generation** - Python, Java, JavaScript clients
-- ✅ **Validation** - Request/response validation at runtime
-- 🧪 **Testing** - Contract testing, mock servers
-- 🤝 **Team collaboration** - Single source of truth
-
     {"latitude": 37.7849, "longitude": -122.4094},
-    {"latitude": 37.7649, "longitude": -122.4094}
+    {"latitude": 37.7649, "longitude": -122.4094},
+    {"latitude": 37.7749, "longitude": -122.4194}
   ],
   "type": "restaurant",
   "limit": 50
 }
 ```
 
-**Response:** Similar to nearby search
+**Response (200 OK):**
+```json
+{
+  "places": [...],
+  "total": 42,
+  "polygon_area_km2": 2.5
+}
+```
 
 ---
 
