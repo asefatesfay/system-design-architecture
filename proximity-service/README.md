@@ -499,22 +499,22 @@ graph LR
 
 ```mermaid
 graph TB
-    Client[Mobile/Web Clients]
-    LB[Load Balancer<br/>NGINX/AWS ALB]
-    API1[API Server 1]
-    API2[API Server 2]
-    API3[API Server N]
+    Client["Mobile/Web Clients"]
+    LB["Load Balancer<br/>NGINX/AWS ALB"]
+    API1["API Server 1"]
+    API2["API Server 2"]
+    API3["API Server N"]
     
-    Cache[(Redis Cache<br/>Geospatial Index)]
-    GeoIndex[In-Memory<br/>Geospatial Service<br/>QuadTree/Geohash]
+    Cache["(Redis Cache<br/>Geospatial Index)"]
+    GeoIndex["In-Memory<br/>Geospatial Service<br/>QuadTree/Geohash"]
     
-    DBPrimary[(PostgreSQL Primary<br/>PostGIS)]
-    DBReplica1[(Read Replica 1<br/>North America)]
-    DBReplica2[(Read Replica 2<br/>Europe)]
-    DBReplica3[(Read Replica 3<br/>Asia)]
+    DBPrimary["(PostgreSQL Primary<br/>PostGIS)"]
+    DBReplica1["(Read Replica 1<br/>North America)"]
+    DBReplica2["(Read Replica 2<br/>Europe)"]
+    DBReplica3["(Read Replica 3<br/>Asia)"]
     
-    CDN[CDN<br/>CloudFront/CloudFlare]
-    S3[(S3<br/>Place Photos)]
+    CDN["CDN<br/>CloudFront/CloudFlare"]
+    S3["(S3<br/>Place Photos)"]
     
     Client --> LB
     LB --> API1
@@ -529,21 +529,21 @@ graph TB
     API2 --> GeoIndex
     API3 --> GeoIndex
     
-    API1 -.->|Writes| DBPrimary
-    API2 -.->|Writes| DBPrimary
-    API3 -.->|Writes| DBPrimary
+    API1 -.->|"Writes"| DBPrimary
+    API2 -.->|"Writes"| DBPrimary
+    API3 -.->|"Writes"| DBPrimary
     
-    API1 -->|Reads| DBReplica1
-    API2 -->|Reads| DBReplica2
-    API3 -->|Reads| DBReplica3
+    API1 -->|"Reads"| DBReplica1
+    API2 -->|"Reads"| DBReplica2
+    API3 -->|"Reads"| DBReplica3
     
-    DBPrimary -.->|Replication| DBReplica1
-    DBPrimary -.->|Replication| DBReplica2
-    DBPrimary -.->|Replication| DBReplica3
+    DBPrimary -.->|"Replication"| DBReplica1
+    DBPrimary -.->|"Replication"| DBReplica2
+    DBPrimary -.->|"Replication"| DBReplica3
     
-    GeoIndex -.->|Sync every 5min| DBReplica1
+    GeoIndex -.->|"Sync every 5min"| DBReplica1
     
-    Client -->|Static Content| CDN
+    Client -->|"Static Content"| CDN
     CDN --> S3
     
     style Client fill:#e1f5ff
@@ -628,12 +628,12 @@ erDiagram
     
     PLACE_METADATA {
         varchar place_id FK
-        varchar key
+        varchar key_name
         text value
     }
     
     PLACE_GEOHASH {
-        varchar place_id PK_FK
+        varchar place_id PK "FK to PLACES"
         varchar geohash
     }
 ```
@@ -874,40 +874,7 @@ SELECT
     latitude,
     longitude,
     ST_Distance(
-   
-
-**Geohash Grid Visualization:**
-
-```mermaid
-graph TB
-    subgraph "World (Geohash Precision 1)"
-        A[9] --> B[9q - California]
-    end
-    
-    subgraph "California (Precision 2)"
-        B --> C[9q8 - SF Bay Area]
-        B --> D[9qh - San Diego]
-    end
-    
-    subgraph "SF Bay Area (Precision 3)"
-        C --> E[9q8y - San Francisco]
-        C --> F[9q9p - Oakland]
-    end
-    
-    subgraph "San Francisco (Precision 4)"
-        E --> G[9q8yy - Mission District]
-        E --> H[9q8yz - SOMA]
-        E --> I[9q8yu - Marina]
-    end
-    
-    subgraph "Mission District (Precision 5)"
-        G --> J[9q8yy9 - 16th & Valencia<br/>±4.9m precision]
-        G --> K[9q8yyd - 24th & Mission<br/>±4.9m precision]
-    end
-    
-    style J fill:#90EE90
-    style K fill:#90EE90
-```     location,
+        location,
         ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography
     ) AS distance
 FROM places
@@ -965,22 +932,29 @@ for place in all_places:  # 500M places!
 # Only check places in nearby grid cells
 results = geospatial_index.search(user_location, radius)
 # Time complexity: O(log n) or O(1) - Fast! ✅
+```
+
+---
+
+### Approach 1: QuadTree
+
+**QuadTree Visualization:**
 
 ```mermaid
 graph TD
-    Root[Root Node<br/>World<br/>Capacity: 50]
+    Root["Root Node<br/>World<br/>Capacity: 50"]
     
-    Root --> NW[Northwest<br/>North America]
-    Root --> NE[Northeast<br/>Europe/Asia]
-    Root --> SW[Southwest<br/>South America]
-    Root --> SE[Southeast<br/>Africa/Oceania]
+    Root --> NW["Northwest<br/>North America"]
+    Root --> NE["Northeast<br/>Europe/Asia"]
+    Root --> SW["Southwest<br/>South America"]
+    Root --> SE["Southeast<br/>Africa/Oceania"]
     
-    NW --> NW_NW[NW-NW<br/>Canada]
-    NW --> NW_NE[NW-NE<br/>Northeast US]
-    NW --> NW_SW[NW-SW<br/>Southwest US]
-    NW --> NW_SE[NW-SE<br/>Southeast US]
+    NW --> NW_NW["NW-NW<br/>Canada"]
+    NW --> NW_NE["NW-NE<br/>Northeast US"]
+    NW --> NW_SW["NW-SW<br/>Southwest US"]
+    NW --> NW_SE["NW-SE<br/>Southeast US"]
     
-    NW_SW --> CA[California<br/>50 places]
+    NW_SW --> CA["California<br/>50 places"]
     NW_SW --> NV[Nevada<br/>30 places]
     
     CA --> SF[San Francisco<br/>Places: 12<br/>p1, p2, ..., p12]
@@ -1042,6 +1016,39 @@ San Francisco: "9q8yy" (5 chars ≈ 5km precision)
 - 9q8y: District
 - 9q8: City
 - 9q: Region
+```
+
+**Geohash Hierarchy Visualization:**
+
+```mermaid
+graph TB
+    subgraph "World - Precision 1"
+        A["9"] --> B["9q - California"]
+    end
+    
+    subgraph "California - Precision 2"
+        B --> C["9q8 - SF Bay Area"]
+        B --> D["9qh - San Diego"]
+    end
+    
+    subgraph "SF Bay Area - Precision 3"
+        C --> E["9q8y - San Francisco"]
+        C --> F["9q9p - Oakland"]
+    end
+    
+    subgraph "San Francisco - Precision 4"
+        E --> G["9q8yy - Mission District"]
+        E --> H["9q8yz - SOMA"]
+        E --> I["9q8yu - Marina"]
+    end
+    
+    subgraph "Mission District - Precision 5"
+        G --> J["9q8yy9 - 16th & Valencia<br/>±4.9m precision"]
+        G --> K["9q8yyd - 24th & Mission<br/>±4.9m precision"]
+    end
+    
+    style J fill:#90EE90
+    style K fill:#90EE90
 ```
 
 **Implementation:**
