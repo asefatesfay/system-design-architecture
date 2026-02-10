@@ -20,6 +20,10 @@ A service to find nearby places/businesses based on user location (similar to Ye
 - [Database Schema](#database-schema)
 - [Geospatial Indexing](#geospatial-indexing)
 - [Deep Dive](#deep-dive)
+- [Monitoring & Observability](#monitoring--observability)
+- [Edge Cases & Production Gotchas](#edge-cases--production-gotchas)
+- [Security & Access Control](#security--access-control)
+- [Production Code Examples](#production-code-examples)
 
 ---
 
@@ -928,6 +932,526 @@ results = geospatial_index.search(user_location, radius)
 
 ---
 
+### What is a Geospatial Index?
+
+A **geospatial index** is a specialized data structure optimized for storing and querying spatial data (points, lines, polygons, etc.) based on their location in 2D or 3D space. Unlike traditional database indexes (B-tree) which work well for one-dimensional data, geospatial indexes handle multidimensional data efficiently.
+
+**Key Concepts:**
+
+**1. The Problem with Traditional Indexes:**
+```sql
+-- Traditional B-tree index on latitude
+CREATE INDEX idx_lat ON places(latitude);
+
+-- This query still needs to scan many rows!
+SELECT * FROM places 
+WHERE latitude BETWEEN 37.7 AND 37.8
+  AND longitude BETWEEN -122.5 AND -122.4;
+
+-- Why? B-tree can use the latitude index, but still needs 
+-- to scan ALL rows in that latitude range to check longitude!
+```
+
+**2. Why We Need Spatial Indexes:**
+- **2D/3D queries:** Need to efficiently query multiple dimensions simultaneously
+- **Proximity searches:** "Find all points within X distance from Y"
+- **Geometric queries:** Intersections, containment, overlaps
+- **Bounding box queries:** "Find all objects within this rectangular area"
+
+**3. How Spatial Indexes Work:**
+
+```mermaid
+graph TB
+    subgraph "Traditional B-Tree (1D)"
+        B1[Root<br/>Values: 1-100]
+        B2[Node<br/>1-50]
+        B3[Node<br/>51-100]
+        B4[Leaf<br/>1-25]
+        B5[Leaf<br/>26-50]
+        
+        B1 --> B2
+        B1 --> B3
+        B2 --> B4
+        B2 --> B5
+    end
+    
+    subgraph "Spatial Index (2D)"
+        S1[Root<br/>Entire Map]
+        S2[Quadrant<br/>Northwest]
+        S3[Quadrant<br/>Northeast]
+        S4[Cell<br/>San Francisco]
+        S5[Cell<br/>Oakland]
+        S6[Places<br/>p1, p2, p3]
+        
+        S1 --> S2
+        S1 --> S3
+        S2 --> S4
+        S2 --> S5
+        S4 --> S6
+    end
+    
+    style B1 fill:#FFD700
+    style S1 fill:#90EE90
+    style S6 fill:#87CEEB
+```
+
+### What is PostGIS?
+
+**PostGIS** is a spatial database extension for PostgreSQL that adds support for geographic objects and spatial queries. Think of it as "GPS for your database."
+
+**Analogy:** If PostgreSQL is like a filing cabinet for regular documents, PostGIS adds a special section that can store and find things on a map.
+
+**What PostGIS Provides:**
+
+```mermaid
+graph LR
+    PostgreSQL[PostgreSQL<br/>Relational Database]
+    
+    PostgreSQL --> PostGIS[PostGIS Extension]
+    
+    PostGIS --> Types[Spatial Data Types<br/>GEOMETRY, GEOGRAPHY]
+    PostGIS --> Functions[Spatial Functions<br/>ST_Distance, ST_DWithin]
+    PostGIS --> Indexes[Spatial Indexes<br/>R-Tree via GiST]
+    PostGIS --> Operators[Spatial Operators<br/>&&, @, ~]
+    
+    Types --> UseCase1[Store points, lines,<br/>polygons on Earth]
+    Functions --> UseCase2[Calculate distances,<br/>areas, intersections]
+    Indexes --> UseCase3[Fast proximity searches]
+    Operators --> UseCase4[Geometric comparisons]
+    
+    style PostGIS fill:#4CAF50
+    style Types fill:#2196F3
+    style Functions fill:#FF9800
+    style Indexes fill:#9C27B0
+```
+
+#### Installing PostGIS
+
+```sql
+-- Enable PostGIS extension in PostgreSQL
+CREATE EXTENSION postgis;
+
+-- Verify installation
+SELECT PostGIS_version();
+-- Returns: "3.4 USE_GEOS=1 USE_PROJ=1 USE_STATS=1"
+```
+
+#### PostGIS Data Types
+
+**1. GEOMETRY vs GEOGRAPHY:**
+
+```sql
+-- GEOMETRY: Flat 2D plane (faster, less accurate for long distances)
+-- Good for: Small areas, city-level searches
+-- Units: Depends on SRID (usually meters or degrees)
+
+-- GEOGRAPHY: Spherical Earth (slower, more accurate)
+-- Good for: Large areas, cross-country/continent searches
+-- Units: Always meters
+
+-- Example:
+CREATE TABLE places (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    
+    -- GEOMETRY: Faster for nearby searches
+    location_geom GEOMETRY(POINT, 4326),
+    
+    -- GEOGRAPHY: Accurate for long distances
+    location_geog GEOGRAPHY(POINT, 4326)
+);
+
+-- SRID 4326 = WGS84 (standard GPS coordinates)
+```
+
+**Choosing GEOMETRY vs GEOGRAPHY:**
+
+| Aspect | GEOMETRY | GEOGRAPHY |
+|--------|----------|-----------|
+| **Calculation** | Cartesian (flat) | Spherical (curved Earth) |
+| **Performance** | Faster | Slower (~3-5x) |
+| **Accuracy** | Good for <100km | Always accurate |
+| **Use Case** | City/regional searches | Global searches |
+| **Distance Units** | Depends on SRID | Always meters |
+| **Example** | "Restaurants in SF" | "Airports worldwide" |
+
+**Recommendation for Proximity Service:** Use **GEOGRAPHY** for accuracy, since we're dealing with global place searches.
+
+#### PostGIS Spatial Functions
+
+**Essential Functions:**
+
+```sql
+-- 1. ST_MakePoint: Create a point from lat/lon
+SELECT ST_MakePoint(-122.4194, 37.7749);
+-- Returns: POINT(-122.4194 37.7749)
+
+-- 2. ST_SetSRID: Set the spatial reference system
+SELECT ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326);
+-- Returns: POINT with SRID 4326 (WGS84)
+
+-- 3. ST_Distance: Calculate distance between two points
+SELECT ST_Distance(
+    ST_MakePoint(-122.4194, 37.7749)::geography,  -- San Francisco
+    ST_MakePoint(-122.2711, 37.8044)::geography   -- Oakland
+);
+-- Returns: 13451.23 (meters)
+
+-- 4. ST_DWithin: Check if points are within distance
+SELECT ST_DWithin(
+    ST_MakePoint(-122.4194, 37.7749)::geography,
+    ST_MakePoint(-122.2711, 37.8044)::geography,
+    20000  -- 20km in meters
+);
+-- Returns: true
+
+-- 5. ST_Buffer: Create a circle around a point
+SELECT ST_Buffer(
+    ST_MakePoint(-122.4194, 37.7749)::geography,
+    5000  -- 5km radius
+);
+-- Returns: Polygon representing 5km circle
+
+-- 6. ST_Contains: Check if polygon contains point
+SELECT ST_Contains(
+    polygon_geom,
+    point_geom
+);
+
+-- 7. ST_Intersects: Check if geometries intersect
+SELECT ST_Intersects(geom1, geom2);
+```
+
+**Practical Example:**
+
+```sql
+-- Find all restaurants within 5km of a location
+SELECT 
+    place_id,
+    name,
+    ST_Distance(
+        location,
+        ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography
+    ) AS distance_meters
+FROM places
+WHERE 
+    type = 'restaurant'
+    AND ST_DWithin(
+        location,
+        ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography,
+        5000  -- 5km radius
+    )
+ORDER BY distance_meters
+LIMIT 20;
+```
+
+#### PostGIS Spatial Indexes: R-Tree via GiST
+
+PostGIS uses **R-Tree** (Rectangle Tree) spatial indexing through PostgreSQL's **GiST** (Generalized Search Tree) index.
+
+**What is R-Tree?**
+
+An R-Tree organizes spatial data by grouping nearby objects into hierarchical bounding rectangles.
+
+**R-Tree Structure Visualization:**
+
+```mermaid
+graph TB
+    subgraph "Level 0: Root (Entire World)"
+        Root["Bounding Box: Earth<br/>(-180,-90) to (180,90)"]
+    end
+    
+    subgraph "Level 1: Continents"
+        Root --> R1["R1: North America<br/>(-170, 15) to (-50, 85)"]
+        Root --> R2["R2: Europe<br/>(-10, 35) to (40, 71)"]
+        Root --> R3["R3: Asia<br/>(60, -10) to (145, 55)"]
+    end
+    
+    subgraph "Level 2: Regions"
+        R1 --> R1_1["R1.1: California<br/>(-125, 32) to (-114, 42)"]
+        R1 --> R1_2["R1.2: Texas<br/>(-107, 26) to (-93, 36)"]
+    end
+    
+    subgraph "Level 3: Cities"
+        R1_1 --> R1_1_1["R1.1.1: SF Bay Area<br/>(-122.6, 37.3) to (-121.7, 38.0)"]
+        R1_1 --> R1_1_2["R1.1.2: LA Area<br/>(-118.7, 33.7) to (-117.6, 34.3)"]
+    end
+    
+    subgraph "Level 4: Places (Leaf Nodes)"
+        R1_1_1 --> Places["Places in SF:<br/>• Restaurant A (37.77, -122.41)<br/>• Cafe B (37.78, -122.40)<br/>• Hotel C (37.79, -122.42)"]
+    end
+    
+    style Root fill:#FF6B6B
+    style R1 fill:#FFD93D
+    style R1_1 fill:#6BCB77
+    style R1_1_1 fill:#4D96FF
+    style Places fill:#90EE90
+```
+
+**How R-Tree Search Works:**
+
+```mermaid
+sequenceDiagram
+    participant Query as Query: Find places<br/>near (37.77, -122.41)<br/>within 5km
+    participant Root as Root Node
+    participant L1 as Level 1:<br/>North America
+    participant L2 as Level 2:<br/>California
+    participant L3 as Level 3:<br/>SF Bay Area
+    participant Leaf as Leaf Node:<br/>Places
+    
+    Query->>Root: Does search circle<br/>intersect world box?
+    Root-->>Query: Yes (obviously)
+    
+    Query->>Root: Which child boxes<br/>intersect?
+    Root-->>Query: Only North America
+    
+    Query->>L1: Which child boxes<br/>intersect?
+    L1-->>Query: Only California
+    
+    Query->>L2: Which child boxes<br/>intersect?
+    L2-->>Query: Only SF Bay Area
+    
+    Query->>L3: Which child boxes<br/>intersect?
+    L3-->>Query: SF Bay Area box
+    
+    Query->>Leaf: Get all places in leaf
+    Leaf-->>Query: 3 places returned
+    
+    Query->>Query: Filter by exact distance<br/>(haversine formula)
+    Query->>Query: Return final results
+    
+    Note over Query,Leaf: Pruned ~99.9% of data<br/>by checking bounding boxes!
+```
+
+**Creating a Spatial Index:**
+
+```sql
+-- Create GiST index on GEOGRAPHY column
+CREATE INDEX idx_places_location 
+ON places 
+USING GIST(location);
+
+-- For GEOMETRY (faster but less accurate):
+CREATE INDEX idx_places_location_geom
+ON places 
+USING GIST(location_geom);
+
+-- Check if index is being used
+EXPLAIN ANALYZE
+SELECT * FROM places
+WHERE ST_DWithin(
+    location,
+    ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography,
+    5000
+);
+
+-- Output should show: "Index Scan using idx_places_location"
+```
+
+**Index Performance:**
+
+```mermaid
+graph LR
+    subgraph "Without Spatial Index"
+        Q1[Query: Find nearby places]
+        Q1 --> Scan1[Sequential Scan<br/>Check all 500M rows]
+        Scan1 --> Time1[⏱️ 30-60 seconds]
+    end
+    
+    subgraph "With GiST Spatial Index"
+        Q2[Query: Find nearby places]
+        Q2 --> Scan2[Index Scan<br/>Check ~1000 rows]
+        Scan2 --> Time2[⏱️ 10-50 milliseconds]
+    end
+    
+    style Time1 fill:#FF6B6B
+    style Time2 fill:#90EE90
+```
+
+**Performance Comparison:**
+
+| Dataset Size | Without Index | With GiST Index | Speedup |
+|--------------|---------------|-----------------|---------|
+| 100K places | 500ms | 5ms | 100x |
+| 1M places | 5s | 10ms | 500x |
+| 10M places | 50s | 20ms | 2500x |
+| 500M places | ~40min | 50ms | 48000x |
+
+#### PostGIS Query Optimization Tips
+
+**1. Use ST_DWithin instead of ST_Distance:**
+
+```sql
+-- ❌ SLOW: Calculates distance for every row
+SELECT * FROM places
+WHERE ST_Distance(location, my_point) < 5000;
+
+-- ✅ FAST: Uses spatial index
+SELECT * FROM places
+WHERE ST_DWithin(location, my_point, 5000);
+```
+
+**2. Always cast to GEOGRAPHY for accurate distances:**
+
+```sql
+-- Include ::geography to use spherical calculations
+WHERE ST_DWithin(
+    location,
+    ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography,
+    5000
+);
+```
+
+**3. Use bounding box operator && for pre-filtering:**
+
+```sql
+-- Fast pre-filter with bounding box, then exact distance
+SELECT * FROM places
+WHERE 
+    location && ST_Expand(
+        ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography,
+        5000
+    )  -- Bounding box check (uses index)
+    AND ST_DWithin(location, my_point, 5000);  -- Exact distance
+```
+
+**4. Consider using GEOMETRY for small areas:**
+
+```sql
+-- For city-level searches, GEOMETRY is 3-5x faster
+-- Transform coordinates to a planar projection
+SELECT * FROM places
+WHERE ST_DWithin(
+    ST_Transform(location_geom, 3857),  -- Web Mercator
+    ST_Transform(my_point, 3857),
+    5000
+);
+```
+
+#### Real-World PostGIS Example
+
+```sql
+-- Complete example: Proximity service query
+
+-- Step 1: Create table with PostGIS
+CREATE TABLE places (
+    place_id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    location GEOGRAPHY(POINT, 4326),  -- PostGIS type
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Step 2: Create spatial index
+CREATE INDEX idx_places_location ON places USING GIST(location);
+
+-- Step 3: Populate location from lat/lon
+INSERT INTO places (place_id, name, type, latitude, longitude, location)
+VALUES (
+    'place_001',
+    'Blue Bottle Coffee',
+    'cafe',
+    37.7764,
+    -122.4172,
+    ST_SetSRID(ST_MakePoint(-122.4172, 37.7764), 4326)::geography
+);
+
+-- Step 4: Query nearby places
+SELECT 
+    place_id,
+    name,
+    type,
+    ROUND(
+        ST_Distance(
+            location,
+            ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography
+        )::numeric,
+        2
+    ) AS distance_meters,
+    ROUND(
+        ST_Distance(
+            location,
+            ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography
+        )::numeric / 1000,
+        2
+    ) AS distance_km
+FROM places
+WHERE 
+    ST_DWithin(
+        location,
+        ST_SetSRID(ST_MakePoint(-122.4194, 37.7749), 4326)::geography,
+        5000  -- 5km radius
+    )
+    AND type = 'cafe'
+ORDER BY distance_meters ASC
+LIMIT 20;
+
+-- Example result:
+-- place_id    | name              | type | distance_meters | distance_km
+-- ------------|-------------------|------|-----------------|------------
+-- place_001   | Blue Bottle       | cafe | 450.23          | 0.45
+-- place_002   | Four Barrel       | cafe | 892.15          | 0.89
+-- place_003   | Ritual Coffee     | cafe | 1245.67         | 1.25
+```
+
+#### PostGIS vs Other Approaches
+
+```mermaid
+graph TB
+    Approaches[Geospatial Approaches]
+    
+    Approaches --> A1[PostGIS R-Tree<br/>Database-native]
+    Approaches --> A2[Redis Geohash<br/>In-memory cache]
+    Approaches --> A3[QuadTree<br/>Application-level]
+    Approaches --> A4[Google S2<br/>Library-based]
+    
+    A1 --> A1_Pro["✅ Persistent storage<br/>✅ ACID transactions<br/>✅ Complex queries<br/>✅ Battle-tested"]
+    A1 --> A1_Con["❌ Disk I/O latency<br/>❌ Slower than memory<br/>❌ Vertical scaling limits"]
+    
+    A2 --> A2_Pro["✅ Extremely fast<br/>✅ Simple implementation<br/>✅ Built-in GEORADIUS<br/>✅ Horizontal scaling"]
+    A2 --> A2_Con["❌ No persistence<br/>❌ Memory cost<br/>❌ Edge cases<br/>❌ Limited query types"]
+    
+    A3 --> A3_Pro["✅ Flexible<br/>✅ Custom optimization<br/>✅ Good for dynamic data"]
+    A3 --> A3_Con["❌ Complex to implement<br/>❌ Rebalancing overhead<br/>❌ Not battle-tested"]
+    
+    A4 --> A4_Pro["✅ Best coverage<br/>✅ No gaps/overlaps<br/>✅ Advanced queries"]
+    A4 --> A4_Con["❌ Complex API<br/>❌ Heavy library<br/>❌ Learning curve"]
+    
+    style A1 fill:#4CAF50
+    style A2 fill:#FF9800
+    style A3 fill:#2196F3
+    style A4 fill:#9C27B0
+```
+
+**Hybrid Approach (Recommended):**
+
+```
+┌─────────────────────────────────────────┐
+│   Layer 1: Redis Cache (Geohash)       │
+│   • Fast in-memory lookups              │
+│   • 80% cache hit rate                  │
+│   • TTL: 5 minutes                      │
+│   • Response: 5-10ms                    │
+└─────────────────────────────────────────┘
+              ↓ Cache miss
+┌─────────────────────────────────────────┐
+│   Layer 2: PostgreSQL + PostGIS         │
+│   • Persistent, accurate storage        │
+│   • R-Tree spatial index (GiST)         │
+│   • 20% cache miss traffic              │
+│   • Response: 30-100ms                  │
+└─────────────────────────────────────────┘
+```
+
+**Why This Hybrid?**
+- **Redis:** Fast for 80% of requests (popular locations)
+- **PostGIS:** Authoritative source, handles complex queries
+- **Best of both worlds:** Speed + accuracy + persistence
+
+---
+
 ### Approach 1: QuadTree
 
 **QuadTree Visualization:**
@@ -1682,12 +2206,1891 @@ graph LR
 - Eventual consistency for better availability
 - Read replicas for scalability vs consistency
 
-**Next Steps:**
-1. Implement MVP with single region
-2. Add caching layer
-3. Horizontal scaling with load balancer
-4. Multi-region deployment
-5. Add monitoring and alerts
+**What This Document Covers:**
+
+✅ **Core Design** - Architecture, API, database, geospatial indexing  
+✅ **Production Ready** - Monitoring, security, edge cases, code examples  
+✅ **Operational** - Deployment, scaling, troubleshooting  
+✅ **Real-World** - PostGIS deep dive, Redis integration, complete FastAPI app
+
+**Implementation Path:**
+1. ✅ MVP with single region (covered in [Production Code Examples](#production-code-examples))
+2. ✅ Add monitoring & observability (see [Monitoring & Observability](#monitoring--observability))
+3. ✅ Implement security & rate limiting (see [Security & Access Control](#security--access-control))
+4. ✅ Handle edge cases (see [Edge Cases & Production Gotchas](#edge-cases--production-gotchas))
+5. 🔄 Horizontal scaling with load balancer
+6. 🔄 Multi-region deployment
+
+---
+
+## Monitoring & Observability
+
+### Key Metrics to Track
+
+```mermaid
+graph TB
+    subgraph "Application Metrics"
+        A1[Request Rate<br/>requests/second]
+        A2[Latency<br/>P50, P95, P99]
+        A3[Error Rate<br/>4xx, 5xx errors]
+        A4[Cache Hit Ratio<br/>L1, L2 cache]
+    end
+    
+    subgraph "Database Metrics"
+        D1[Query Duration<br/>slow queries > 100ms]
+        D2[Connection Pool<br/>active/idle/max]
+        D3[Replication Lag<br/>primary vs replicas]
+        D4[Disk I/O<br/>IOPS, throughput]
+    end
+    
+    subgraph "Infrastructure Metrics"
+        I1[CPU Usage<br/>per service]
+        I2[Memory Usage<br/>heap, RSS]
+        I3[Network I/O<br/>bandwidth usage]
+        I4[Disk Space<br/>available/total]
+    end
+    
+    subgraph "Business Metrics"
+        B1[Search Radius<br/>distribution]
+        B2[Popular Types<br/>restaurant, cafe, etc]
+        B3[Geographic Hotspots<br/>high-traffic regions]
+        B4[Active Users<br/>DAU, MAU]
+    end
+    
+    style A2 fill:#FF6B6B
+    style A3 fill:#FF6B6B
+    style D1 fill:#FFD93D
+    style D3 fill:#FFD93D
+```
+
+### Prometheus Metrics Configuration
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'proximity-api'
+    static_configs:
+      - targets: ['api-server-1:8080', 'api-server-2:8080']
+    metrics_path: '/metrics'
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+```
+
+### Application Instrumentation (Python Example)
+
+```python
+from prometheus_client import Counter, Histogram, Gauge, generate_latest
+from functools import wraps
+import time
+
+# Define metrics
+REQUEST_COUNT = Counter(
+    'proximity_requests_total',
+    'Total number of proximity search requests',
+    ['method', 'endpoint', 'status']
+)
+
+REQUEST_LATENCY = Histogram(
+    'proximity_request_duration_seconds',
+    'Request latency in seconds',
+    ['endpoint'],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+)
+
+CACHE_HITS = Counter(
+    'proximity_cache_hits_total',
+    'Total number of cache hits',
+    ['cache_level']
+)
+
+CACHE_MISSES = Counter(
+    'proximity_cache_misses_total',
+    'Total number of cache misses',
+    ['cache_level']
+)
+
+DB_QUERY_DURATION = Histogram(
+    'proximity_db_query_duration_seconds',
+    'Database query duration',
+    ['query_type'],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+)
+
+ACTIVE_CONNECTIONS = Gauge(
+    'proximity_active_db_connections',
+    'Number of active database connections'
+)
+
+# Decorator for tracking request metrics
+def track_request_metrics(endpoint):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            start_time = time.time()
+            status = 200
+            
+            try:
+                result = await func(*args, **kwargs)
+                return result
+            except HTTPException as e:
+                status = e.status_code
+                raise
+            except Exception:
+                status = 500
+                raise
+            finally:
+                duration = time.time() - start_time
+                REQUEST_COUNT.labels(
+                    method='GET',
+                    endpoint=endpoint,
+                    status=status
+                ).inc()
+                REQUEST_LATENCY.labels(endpoint=endpoint).observe(duration)
+        
+        return wrapper
+    return decorator
+
+# Usage in API handler
+@app.get("/v1/places/nearby")
+@track_request_metrics("nearby")
+async def search_nearby(lat: float, lon: float, radius: int):
+    # Check L1 cache
+    cache_key = f"nearby:{lat:.2f}:{lon:.2f}:{radius}"
+    
+    result = app_cache.get(cache_key)
+    if result:
+        CACHE_HITS.labels(cache_level='L1').inc()
+        return result
+    
+    CACHE_MISSES.labels(cache_level='L1').inc()
+    
+    # Check L2 cache (Redis)
+    result = await redis_client.get(cache_key)
+    if result:
+        CACHE_HITS.labels(cache_level='L2').inc()
+        return json.loads(result)
+    
+    CACHE_MISSES.labels(cache_level='L2').inc()
+    
+    # Query database
+    start_time = time.time()
+    result = await db.query_nearby(lat, lon, radius)
+    duration = time.time() - start_time
+    
+    DB_QUERY_DURATION.labels(query_type='nearby').observe(duration)
+    
+    # Update caches
+    await redis_client.setex(cache_key, 300, json.dumps(result))
+    app_cache.set(cache_key, result, ttl=60)
+    
+    return result
+```
+
+### Alert Rules (Prometheus AlertManager)
+
+```yaml
+# alerts.yml
+groups:
+  - name: proximity_service_alerts
+    interval: 30s
+    rules:
+      # High latency alert
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, rate(proximity_request_duration_seconds_bucket[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: proximity-api
+        annotations:
+          summary: "High API latency detected"
+          description: "P99 latency is {{ $value }}s (threshold: 0.2s)"
+
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: sum(rate(proximity_requests_total{status=~"5.."}[5m])) / sum(rate(proximity_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: proximity-api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 1%)"
+
+      # Low cache hit rate
+      - alert: LowCacheHitRate
+        expr: sum(rate(proximity_cache_hits_total{cache_level="L2"}[10m])) / (sum(rate(proximity_cache_hits_total{cache_level="L2"}[10m])) + sum(rate(proximity_cache_misses_total{cache_level="L2"}[10m]))) < 0.7
+        for: 10m
+        labels:
+          severity: warning
+          service: proximity-api
+        annotations:
+          summary: "Low Redis cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} (threshold: 70%)"
+
+      # Database connection pool exhaustion
+      - alert: DatabaseConnectionPoolExhausted
+        expr: proximity_active_db_connections / proximity_max_db_connections > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          service: proximity-api
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Using {{ $value | humanizePercentage }} of connection pool"
+
+      # High database replication lag
+      - alert: HighReplicationLag
+        expr: pg_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: "High PostgreSQL replication lag"
+          description: "Replication lag is {{ $value }}s (threshold: 30s)"
+
+      # Redis down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis is down"
+          description: "Redis instance {{ $labels.instance }} is unreachable"
+
+      # Disk space low
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+        annotations:
+          summary: "Low disk space"
+          description: "Disk {{ $labels.device }} has {{ $value | humanizePercentage }} space remaining"
+```
+
+### Distributed Tracing with OpenTelemetry
+
+```python
+from opentelemetry import trace
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+
+# Setup tracing
+trace.set_tracer_provider(TracerProvider())
+tracer = trace.get_tracer(__name__)
+
+# Configure Jaeger exporter
+jaeger_exporter = JaegerExporter(
+    agent_host_name="jaeger",
+    agent_port=6831,
+)
+
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(jaeger_exporter)
+)
+
+# Auto-instrument frameworks
+FastAPIInstrumentor.instrument_app(app)
+RedisInstrumentor().instrument()
+Psycopg2Instrumentor().instrument()
+
+# Manual tracing example
+@app.get("/v1/places/nearby")
+async def search_nearby(lat: float, lon: float, radius: int):
+    with tracer.start_as_current_span("search_nearby") as span:
+        span.set_attribute("geo.lat", lat)
+        span.set_attribute("geo.lon", lon)
+        span.set_attribute("geo.radius", radius)
+        
+        # Check cache
+        with tracer.start_as_current_span("cache_lookup"):
+            result = await check_cache(lat, lon, radius)
+            if result:
+                span.set_attribute("cache.hit", True)
+                return result
+            span.set_attribute("cache.hit", False)
+        
+        # Query database
+        with tracer.start_as_current_span("db_query"):
+            result = await query_database(lat, lon, radius)
+            span.set_attribute("db.result_count", len(result))
+        
+        # Update cache
+        with tracer.start_as_current_span("cache_update"):
+            await update_cache(lat, lon, radius, result)
+        
+        return result
+```
+
+### Grafana Dashboard Example
+
+```json
+{
+  "dashboard": {
+    "title": "Proximity Service Dashboard",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "targets": [
+          {
+            "expr": "sum(rate(proximity_requests_total[5m])) by (endpoint)",
+            "legendFormat": "{{endpoint}}"
+          }
+        ]
+      },
+      {
+        "title": "Latency (P50, P95, P99)",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(proximity_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(proximity_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(proximity_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P99"
+          }
+        ]
+      },
+      {
+        "title": "Cache Hit Rate",
+        "targets": [
+          {
+            "expr": "sum(rate(proximity_cache_hits_total[5m])) / (sum(rate(proximity_cache_hits_total[5m])) + sum(rate(proximity_cache_misses_total[5m])))",
+            "legendFormat": "Hit Rate"
+          }
+        ]
+      },
+      {
+        "title": "Database Query Duration",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, rate(proximity_db_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "P99 Query Time"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Log Aggregation Strategy
+
+```python
+import structlog
+import logging
+
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
+
+# Usage example
+@app.get("/v1/places/nearby")
+async def search_nearby(
+    lat: float, 
+    lon: float, 
+    radius: int,
+    request_id: str = Header(...)
+):
+    logger.info(
+        "proximity_search_started",
+        request_id=request_id,
+        latitude=lat,
+        longitude=lon,
+        radius=radius,
+        user_agent=request.headers.get("user-agent")
+    )
+    
+    try:
+        result = await perform_search(lat, lon, radius)
+        
+        logger.info(
+            "proximity_search_completed",
+            request_id=request_id,
+            result_count=len(result['places']),
+            duration_ms=result['duration_ms'],
+            cache_hit=result['from_cache']
+        )
+        
+        return result
+        
+    except DatabaseError as e:
+        logger.error(
+            "database_error",
+            request_id=request_id,
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    
+    except Exception as e:
+        logger.exception(
+            "unexpected_error",
+            request_id=request_id,
+            error=str(e)
+        )
+        raise
+```
+
+### SLO/SLA Definitions
+
+| Metric | SLO (Service Level Objective) | SLA (Service Level Agreement) |
+|--------|-------------------------------|-------------------------------|
+| **Availability** | 99.95% uptime | 99.9% uptime (< 43 min downtime/month) |
+| **Latency P99** | < 200ms | < 500ms |
+| **Latency P95** | < 100ms | < 250ms |
+| **Error Rate** | < 0.1% | < 1% |
+| **Cache Hit Rate** | > 80% | > 70% |
+| **Data Freshness** | < 1 minute | < 5 minutes |
+
+---
+
+## Edge Cases & Production Gotchas
+
+### Geographic Edge Cases
+
+**1. International Date Line (±180° longitude)**
+
+```python
+# ❌ WRONG: Naive distance calculation fails
+def distance_naive(lon1, lon2):
+    return abs(lon2 - lon1)
+
+# Example: Alaska (-170°) to Russia (170°)
+distance_naive(-170, 170)  # Returns: 340° (WRONG!)
+# Should be: 20° (crossing dateline)
+
+# ✅ CORRECT: Handle dateline crossing
+def distance_with_dateline(lon1, lon2):
+    diff = abs(lon2 - lon1)
+    if diff > 180:
+        diff = 360 - diff
+    return diff
+
+distance_with_dateline(-170, 170)  # Returns: 20° (Correct!)
+```
+
+**PostGIS handles this automatically:**
+```sql
+-- PostGIS ST_Distance correctly handles dateline
+SELECT ST_Distance(
+    ST_SetSRID(ST_MakePoint(-170, 60), 4326)::geography,  -- Alaska
+    ST_SetSRID(ST_MakePoint(170, 60), 4326)::geography     -- Russia
+);
+-- Returns: ~2,223,901 meters (~2,224 km) ✓
+```
+
+**2. North/South Poles**
+
+```python
+# At the poles, all longitudes converge
+# A 1km radius search at North Pole technically includes 
+# all longitudes!
+
+# Special handling needed:
+def search_near_pole(lat, lon, radius_km):
+    if abs(lat) > 89:  # Within 111km of poles
+        # Use different strategy
+        return search_polar_region(lat, radius_km)
+    else:
+        return standard_search(lat, lon, radius_km)
+```
+
+**3. Wraparound Queries (crossing date line)**
+
+```sql
+-- Query near dateline needs to check both sides
+-- Option 1: Use PostGIS (handles automatically)
+SELECT * FROM places
+WHERE ST_DWithin(
+    location,
+    ST_SetSRID(ST_MakePoint(179.5, 51.5), 4326)::geography,
+    100000  -- 100km
+);
+
+-- Option 2: Manual handling (Geohash approach)
+-- Split into two queries:
+-- Query 1: longitude > 178
+-- Query 2: longitude < -178
+-- Merge results
+```
+
+### Large Radius Edge Cases
+
+**Problem:** Very large radius searches (>1000km) can return too many results.
+
+```python
+# ❌ BAD: No upper limit on radius
+@app.get("/v1/places/nearby")
+async def search_nearby(radius: int):
+    # User requests 10,000 km radius
+    # Returns 10M+ places! 💥
+    pass
+
+# ✅ GOOD: Enforce reasonable limits
+@app.get("/v1/places/nearby")
+async def search_nearby(radius: int = Query(..., ge=100, le=50000)):
+    # Limit: 100m to 50km
+    if radius > 50000:
+        raise HTTPException(
+            status_code=400, 
+            detail="Radius must be <= 50km. Use polygon search for larger areas."
+        )
+    pass
+```
+
+**Alternative approach for large areas:**
+```python
+# For large areas, use bounding box instead of radius
+@app.post("/v1/places/search-area")
+async def search_area(
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float
+):
+    # Validate area size
+    area_km2 = calculate_area(min_lat, max_lat, min_lon, max_lon)
+    if area_km2 > 10000:  # 100km x 100km max
+        raise HTTPException(400, "Search area too large")
+    
+    return await db.query_bbox(min_lat, max_lat, min_lon, max_lon)
+```
+
+### Concurrency & Race Conditions
+
+**1. Duplicate Place Prevention**
+
+```sql
+-- Use unique constraint on coordinates
+CREATE UNIQUE INDEX idx_places_unique_location 
+ON places (
+    ROUND(latitude::numeric, 5),   -- ~1 meter precision
+    ROUND(longitude::numeric, 5)
+);
+
+-- Or use application-level logic
+CREATE UNIQUE INDEX ON places (
+    name, 
+    ROUND(latitude::numeric, 4), 
+    ROUND(longitude::numeric, 4)
+);
+```
+
+```python
+# Application-level duplicate detection
+async def add_place(name: str, lat: float, lon: float):
+    # Check for nearby duplicates (within 50m)
+    existing = await db.query("""
+        SELECT place_id FROM places
+        WHERE ST_DWithin(
+            location,
+            ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326)::geography,
+            50
+        ) AND name = {name}
+        LIMIT 1
+    """)
+    
+    if existing:
+        raise HTTPException(409, "Place already exists nearby")
+    
+    # Insert new place
+    return await db.insert_place(name, lat, lon)
+```
+
+**2. Cache Stampede**
+
+```python
+import asyncio
+from asyncio import Lock
+
+# Problem: Multiple requests for same uncached data overwhelm DB
+cache_locks = {}
+
+async def get_nearby_places(cache_key):
+    # Check cache
+    result = await redis.get(cache_key)
+    if result:
+        return result
+    
+    # ❌ BAD: All requests query DB simultaneously
+    # result = await db.query(...)
+    
+    # ✅ GOOD: Use distributed lock
+    lock = cache_locks.setdefault(cache_key, Lock())
+    
+    async with lock:
+        # Double-check cache (another request may have populated it)
+        result = await redis.get(cache_key)
+        if result:
+            return result
+        
+        # Only one request queries DB
+        result = await db.query(...)
+        await redis.setex(cache_key, 300, result)
+        return result
+```
+
+**Better: Use Redis distributed lock:**
+```python
+from redis.lock import Lock
+
+async def get_nearby_places_with_redis_lock(cache_key):
+    result = await redis.get(cache_key)
+    if result:
+        return result
+    
+    # Distributed lock across all API servers
+    lock = Lock(redis, f"lock:{cache_key}", timeout=10)
+    
+    if lock.acquire(blocking=True, blocking_timeout=5):
+        try:
+            # Double-check
+            result = await redis.get(cache_key)
+            if result:
+                return result
+            
+            result = await db.query(...)
+            await redis.setex(cache_key, 300, result)
+            return result
+        finally:
+            lock.release()
+    else:
+        # Lock timeout, try cache again (might be populated)
+        result = await redis.get(cache_key)
+        if result:
+            return result
+        # Fallback to DB query
+        return await db.query(...)
+```
+
+### Moving Objects (Real-time locations)
+
+**Challenge:** Uber drivers, delivery vehicles move constantly.
+
+```python
+# Don't persist every location update!
+# Use Redis with TTL for ephemeral data
+
+class LiveLocationService:
+    def __init__(self, redis_client):
+        self.redis = redis_client
+    
+    async def update_driver_location(self, driver_id: str, lat: float, lon: float):
+        # Only update if moved > 50 meters
+        last_location = await self.redis.geopos('drivers', driver_id)
+        
+        if last_location:
+            old_lat, old_lon = last_location[0]
+            if haversine_distance(lat, lon, old_lat, old_lon) < 0.05:  # 50m
+                return  # Skip update
+        
+        # Update in Redis geospatial index
+        await self.redis.geoadd('drivers', lon, lat, driver_id)
+        
+        # Set TTL: auto-expire after 5 minutes
+        await self.redis.expire(f'driver:{driver_id}', 300)
+        
+        # Don't write to PostgreSQL!
+        # Only persist significant events (trip start/end, shift changes)
+    
+    async def find_nearby_drivers(self, lat: float, lon: float, radius_m: int):
+        # Query Redis only
+        drivers = await self.redis.georadius(
+            'drivers',
+            lon, lat,
+            radius_m,
+            unit='m',
+            withdist=True,
+            count=10
+        )
+        return drivers
+```
+
+### Coordinate Precision & Rounding
+
+```python
+# Decimal places vs accuracy:
+# 5 decimal places: ~1.1 meter precision
+# 4 decimal places: ~11 meters
+# 3 decimal places: ~111 meters
+# 2 decimal places: ~1.1 km
+
+# For caching, round to reduce cache keys:
+def get_cache_key(lat: float, lon: float, radius: int):
+    # Round to 2 decimals for ~1km precision
+    # Nearby searches will share cache
+    lat_rounded = round(lat, 2)
+    lon_rounded = round(lon, 2)
+    return f"nearby:{lat_rounded}:{lon_rounded}:{radius}"
+
+# Example:
+get_cache_key(37.774929, -122.419418, 5000)
+# Returns: "nearby:37.77:-122.42:5000"
+
+get_cache_key(37.775001, -122.419499, 5000)  
+# Returns: "nearby:37.78:-122.42:5000"  (different key)
+
+get_cache_key(37.774500, -122.419200, 5000)  
+# Returns: "nearby:37.77:-122.42:5000"  (same key - cache hit!)
+```
+
+### Geohash Corner Cases
+
+**Geohash boundary problem:**
+
+```python
+# Two nearby places may have different geohash prefixes
+# if they're on opposite sides of a cell boundary
+
+place1 = (37.7749, -122.4194)  # Geohash: 9q8yy
+place2 = (37.7750, -122.4180)  # Geohash: 9q8yz (different!)
+
+# They're only 140 meters apart, but different geohash level-5!
+
+# Solution: Always check neighboring geohash cells
+import pygeohash as pgh
+
+def search_with_geohash(lat, lon, radius_km):
+    precision = 5  # ~5km cells
+    center_hash = pgh.encode(lat, lon, precision)
+    
+    # Get all 8 neighbors + center
+    neighbors = pgh.get_adjacent(center_hash)
+    search_cells = [center_hash] + neighbors
+    
+    # Query all 9 cells
+    results = []
+    for cell in search_cells:
+        places = db.query("SELECT * FROM place_geohash WHERE geohash LIKE %s", cell + '%')
+        results.extend(places)
+    
+    # Filter by exact distance
+    filtered = [
+        p for p in results
+        if haversine_distance(lat, lon, p.lat, p.lon) <= radius_km
+    ]
+    
+    return filtered
+```
+
+### Database Connection Pool Exhaustion
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.pool import QueuePool
+
+# ❌ BAD: Default pool settings
+engine = create_engine(DATABASE_URL)
+
+# ✅ GOOD: Configured pool
+engine = create_engine(
+    DATABASE_URL,
+    poolclass=QueuePool,
+    pool_size=20,           # Normal connections
+    max_overflow=10,        # Burst capacity
+    pool_timeout=30,        # Wait time before error
+    pool_recycle=3600,      # Recycle connections after 1 hour
+    pool_pre_ping=True      # Verify connection before use
+)
+
+# Monitor pool usage
+@app.middleware("http")
+async def track_db_connections(request, call_next):
+    pool = engine.pool
+    ACTIVE_CONNECTIONS.set(pool.size() - pool.free())
+    response = await call_next(request)
+    return response
+```
+
+### Handling Invalid Coordinates
+
+```python
+from pydantic import BaseModel, validator
+
+class LocationRequest(BaseModel):
+    latitude: float
+    longitude: float
+    radius: int
+    
+    @validator('latitude')
+    def validate_latitude(cls, v):
+        if not -90 <= v <= 90:
+            raise ValueError('Latitude must be between -90 and 90')
+        return v
+    
+    @validator('longitude')
+    def validate_longitude(cls, v):
+        if not -180 <= v <= 180:
+            raise ValueError('Longitude must be between -180 and 180')
+        return v
+    
+    @validator('radius')
+    def validate_radius(cls, v):
+        if not 100 <= v <= 50000:  # 100m to 50km
+            raise ValueError('Radius must be between 100 and 50000 meters')
+        return v
+
+# Usage in API
+@app.get("/v1/places/nearby")
+async def search_nearby(location: LocationRequest):
+    # Coordinates are already validated
+    return await search_service.find_nearby(
+        location.latitude,
+        location.longitude,
+        location.radius
+    )
+```
+
+---
+
+## Security & Access Control
+
+### Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API Gateway
+    participant Auth as Auth Service
+    participant Cache as Redis
+    participant DB as Database
+    
+    Client->>API: GET /v1/places/nearby<br/>Authorization: Bearer {token}
+    
+    API->>Cache: Check token in cache
+    
+    alt Token in cache
+        Cache-->>API: Valid token ✓
+    else Token not cached
+        API->>Auth: Verify JWT token
+        Auth->>Auth: Validate signature<br/>Check expiration<br/>Check scopes
+        
+        alt Valid token
+            Auth-->>API: Token valid ✓<br/>User: user_123<br/>Scopes: read:places
+            API->>Cache: Cache token (TTL: 5min)
+        else Invalid token
+            Auth-->>API: 401 Unauthorized
+            API-->>Client: 401 Unauthorized
+        end
+    end
+    
+    API->>API: Check rate limit<br/>for user_123
+    
+    alt Rate limit OK
+        API->>DB: Execute query
+        DB-->>API: Results
+        API-->>Client: 200 OK + Results
+    else Rate limit exceeded
+        API-->>Client: 429 Too Many Requests<br/>Retry-After: 60
+    end
+```
+
+### JWT Token Implementation
+
+```python
+from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+import hashlib
+
+app = FastAPI()
+security = HTTPBearer()
+
+SECRET_KEY = "your-secret-key-here"  # Store in env variable
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+# Token payload structure
+def create_access_token(user_id: str, scopes: list[str]):
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": user_id,
+        "scopes": scopes,
+        "exp": expire,
+        "iat": datetime.utcnow()
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return token
+
+# Verify token dependency
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    redis = Depends(get_redis)
+):
+    token = credentials.credentials
+    
+    # Check if token is blacklisted (logout/revoked)
+    if await redis.get(f"blacklist:{token}"):
+        raise HTTPException(401, "Token has been revoked")
+    
+    # Check cache first
+    cache_key = f"token:{hashlib.sha256(token.encode()).hexdigest()}"
+    cached_user = await redis.get(cache_key)
+    if cached_user:
+        return json.loads(cached_user)
+    
+    # Verify JWT
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        scopes = payload.get("scopes", [])
+        
+        if user_id is None:
+            raise HTTPException(401, "Invalid token")
+        
+        user_data = {"user_id": user_id, "scopes": scopes}
+        
+        # Cache for 5 minutes
+        await redis.setex(cache_key, 300, json.dumps(user_data))
+        
+        return user_data
+        
+    except JWTError:
+        raise HTTPException(401, "Invalid token")
+
+# Scope validation
+def require_scope(required_scope: str):
+    def scope_checker(user: dict = Depends(verify_token)):
+        if required_scope not in user["scopes"]:
+            raise HTTPException(
+                403, 
+                f"Insufficient permissions. Required scope: {required_scope}"
+            )
+        return user
+    return scope_checker
+
+# Protected endpoints
+@app.get("/v1/places/nearby")
+async def search_nearby(
+    lat: float,
+    lon: float,
+    user: dict = Depends(verify_token)  # Read requires auth
+):
+    # Any authenticated user can search
+    return await search_service.find_nearby(lat, lon, 5000)
+
+@app.post("/v1/places")
+async def create_place(
+    place: PlaceCreate,
+    user: dict = Depends(require_scope("write:places"))  # Write requires special scope
+):
+    # Only users with write:places scope can create
+    return await place_service.create(place, owner_id=user["user_id"])
+
+@app.delete("/v1/places/{place_id}")
+async def delete_place(
+    place_id: str,
+    user: dict = Depends(require_scope("admin:places"))  # Delete requires admin
+):
+    # Only admins can delete
+    return await place_service.delete(place_id)
+```
+
+### Rate Limiting
+
+**Token Bucket Algorithm:**
+
+```python
+import time
+from fastapi import Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Apply rate limits
+@app.get("/v1/places/nearby")
+@limiter.limit("100/minute")  # 100 requests per minute per IP
+async def search_nearby(request: Request, lat: float, lon: float):
+    return await search_service.find_nearby(lat, lon, 5000)
+
+@app.post("/v1/places")
+@limiter.limit("10/minute")  # Stricter limit for writes
+async def create_place(request: Request, place: PlaceCreate):
+    return await place_service.create(place)
+```
+
+**Redis-based distributed rate limiting:**
+
+```python
+import time
+from typing import Optional
+
+class RedisRateLimiter:
+    def __init__(self, redis_client):
+        self.redis = redis_client
+    
+    async def is_allowed(
+        self,
+        user_id: str,
+        max_requests: int,
+        window_seconds: int
+    ) -> tuple[bool, Optional[int]]:
+        """
+        Token bucket algorithm with Redis
+        
+        Returns: (allowed: bool, retry_after: Optional[int])
+        """
+        key = f"rate_limit:{user_id}"
+        current_time = int(time.time())
+        window_start = current_time - window_seconds
+        
+        # Use Redis sorted set for sliding window
+        pipe = self.redis.pipeline()
+        
+        # Remove old entries
+        pipe.zremrangebyscore(key, 0, window_start)
+        
+        # Count requests in current window
+        pipe.zcard(key)
+        
+        # Add current request
+        pipe.zadd(key, {f"{current_time}:{os.urandom(8).hex()}": current_time})
+        
+        # Set expiration
+        pipe.expire(key, window_seconds)
+        
+        results = await pipe.execute()
+        request_count = results[1]
+        
+        if request_count < max_requests:
+            return True, None
+        else:
+            # Calculate retry-after
+            oldest_request = await self.redis.zrange(key, 0, 0, withscores=True)
+            if oldest_request:
+                oldest_time = oldest_request[0][1]
+                retry_after = int(window_start + window_seconds - oldest_time)
+                return False, retry_after
+            return False, window_seconds
+
+# Usage
+rate_limiter = RedisRateLimiter(redis_client)
+
+@app.get("/v1/places/nearby")
+async def search_nearby(
+    lat: float,
+    lon: float,
+    user: dict = Depends(verify_token)
+):
+    # Check rate limit
+    allowed, retry_after = await rate_limiter.is_allowed(
+        user_id=user["user_id"],
+        max_requests=100,
+        window_seconds=60
+    )
+    
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)}
+        )
+    
+    return await search_service.find_nearby(lat, lon, 5000)
+```
+
+**Tiered rate limits:**
+
+```python
+# Different limits based on subscription tier
+RATE_LIMITS = {
+    "free": {"requests_per_minute": 60, "requests_per_day": 1000},
+    "pro": {"requests_per_minute": 600, "requests_per_day": 50000},
+    "enterprise": {"requests_per_minute": 6000, "requests_per_day": 1000000}
+}
+
+async def check_rate_limit(user: dict):
+    tier = user.get("subscription_tier", "free")
+    limits = RATE_LIMITS[tier]
+    
+    # Check per-minute limit
+    minute_allowed, retry = await rate_limiter.is_allowed(
+        f"{user['user_id']}:minute",
+        limits["requests_per_minute"],
+        60
+    )
+    
+    if not minute_allowed:
+        raise HTTPException(429, "Minute rate limit exceeded", headers={"Retry-After": str(retry)})
+    
+    # Check per-day limit
+    day_allowed, _ = await rate_limiter.is_allowed(
+        f"{user['user_id']}:day",
+        limits["requests_per_day"],
+        86400
+    )
+    
+    if not day_allowed:
+        raise HTTPException(429, "Daily rate limit exceeded")
+```
+
+### API Key Management
+
+```python
+import secrets
+import hashlib
+from datetime import datetime
+
+class APIKeyService:
+    def __init__(self, db):
+        self.db = db
+    
+    async def create_api_key(self, user_id: str, name: str) -> dict:
+        # Generate secure random key
+        api_key = f"pk_{secrets.token_urlsafe(32)}"
+        
+        # Hash for storage (never store plain text)
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        
+        # Store in database
+        await self.db.execute("""
+            INSERT INTO api_keys (key_hash, user_id, name, created_at)
+            VALUES (%s, %s, %s, %s)
+        """, (key_hash, user_id, name, datetime.utcnow()))
+        
+        # Return key only once (user must save it)
+        return {
+            "api_key": api_key,  # Show only once!
+            "name": name,
+            "created_at": datetime.utcnow().isoformat()
+        }
+    
+    async def verify_api_key(self, api_key: str) -> Optional[dict]:
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        
+        result = await self.db.fetchone("""
+            SELECT user_id, name, scopes, is_active
+            FROM api_keys
+            WHERE key_hash = %s AND is_active = true
+        """, (key_hash,))
+        
+        if not result:
+            return None
+        
+        # Update last_used timestamp
+        await self.db.execute("""
+            UPDATE api_keys 
+            SET last_used_at = %s
+            WHERE key_hash = %s
+        """, (datetime.utcnow(), key_hash))
+        
+        return dict(result)
+    
+    async def revoke_api_key(self, user_id: str, key_hash: str):
+        await self.db.execute("""
+            UPDATE api_keys
+            SET is_active = false, revoked_at = %s
+            WHERE key_hash = %s AND user_id = %s
+        """, (datetime.utcnow(), key_hash, user_id))
+
+# Usage in API
+async def get_current_user(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    api_key_service: APIKeyService = Depends(get_api_key_service)
+):
+    # Support both JWT and API key auth
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+        return await verify_jwt_token(token)
+    
+    elif x_api_key:
+        user = await api_key_service.verify_api_key(x_api_key)
+        if not user:
+            raise HTTPException(401, "Invalid API key")
+        return user
+    
+    else:
+        raise HTTPException(401, "Authentication required")
+```
+
+### Data Encryption
+
+```sql
+-- Encrypt sensitive fields at rest
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Create table with encrypted fields
+CREATE TABLE places (
+    place_id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    
+    -- Encrypted owner contact info
+    owner_email BYTEA,  -- Encrypted
+    owner_phone BYTEA,  -- Encrypted
+    
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    location GEOGRAPHY(POINT, 4326),
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert with encryption
+INSERT INTO places (place_id, name, owner_email, owner_phone, latitude, longitude, location)
+VALUES (
+    'place_001',
+    'Blue Bottle Coffee',
+    pgp_sym_encrypt('owner@example.com', 'encryption-key'),
+    pgp_sym_encrypt('+1-415-555-0123', 'encryption-key'),
+    37.7764,
+    -122.4172,
+    ST_SetSRID(ST_MakePoint(-122.4172, 37.7764), 4326)::geography
+);
+
+-- Query with decryption
+SELECT 
+    place_id,
+    name,
+    pgp_sym_decrypt(owner_email, 'encryption-key') AS owner_email,
+    pgp_sym_decrypt(owner_phone, 'encryption-key') AS owner_phone
+FROM places
+WHERE place_id = 'place_001';
+```
+
+### HTTPS/TLS Configuration
+
+```nginx
+# nginx.conf
+server {
+    listen 443 ssl http2;
+    server_name api.proximity.example.com;
+    
+    # SSL certificates
+    ssl_certificate /etc/ssl/certs/api.proximity.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/api.proximity.example.com.key;
+    
+    # SSL configuration (Mozilla Intermediate)
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+    ssl_prefer_server_ciphers off;
+    
+    # HSTS (HTTP Strict Transport Security)
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    
+    # CORS headers
+    add_header Access-Control-Allow-Origin "https://app.example.com" always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-API-Key" always;
+    
+    # Proxy to application
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name api.proximity.example.com;
+    return 301 https://$server_name$request_uri;
+}
+```
+
+### PII & Location Privacy
+
+```python
+# Anonymize location data in logs
+def anonymize_coordinates(lat: float, lon: float, precision: int = 2) -> tuple[float, float]:
+    """
+    Round coordinates to reduce precision
+    2 decimals = ~1.1km precision (sufficient for analytics)
+    """
+    return round(lat, precision), round(lon, precision)
+
+# Usage in logging
+logger.info(
+    "search_request",
+    user_id=hashlib.sha256(user_id.encode()).hexdigest()[:16],  # Hashed user ID
+    lat_approx=round(lat, 2),  # Reduced precision
+    lon_approx=round(lon, 2),
+    radius=radius
+)
+
+# GDPR compliance: Data deletion
+@app.delete("/v1/users/{user_id}/data")
+async def delete_user_data(
+    user_id: str,
+    user: dict = Depends(require_admin)
+):
+    # Delete all user data
+    await db.execute("DELETE FROM places WHERE owner_id = %s", (user_id,))
+    await db.execute("DELETE FROM api_keys WHERE user_id = %s", (user_id,))
+    await db.execute("DELETE FROM search_history WHERE user_id = %s", (user_id,))
+    
+    # Clear caches
+    await redis.delete(f"user:{user_id}:*")
+    
+    return {"message": "User data deleted successfully"}
+```
+
+---
+
+## Production Code Examples
+
+### Complete FastAPI Implementation
+
+```python
+# main.py
+from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, validator
+from typing import Optional, List
+import asyncpg
+import redis.asyncio as redis
+from contextlib import asynccontextmanager
+import structlog
+
+# Configure logging
+logger = structlog.get_logger()
+
+# Models
+class Location(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+
+class Place(BaseModel):
+    place_id: str
+    name: str
+    address: str
+    location: Location
+    distance: Optional[float] = None  # meters
+    type: str
+    rating: Optional[float] = None
+    is_open: bool = True
+
+class PlaceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    address: str = Field(..., min_length=1)
+    location: Location
+    type: str = Field(..., min_length=1, max_length=50)
+    phone: Optional[str] = None
+    website: Optional[str] = None
+
+class SearchResponse(BaseModel):
+    places: List[Place]
+    total: int
+    has_more: bool
+
+# Database connection pool
+class Database:
+    def __init__(self):
+        self.pool: Optional[asyncpg.Pool] = None
+    
+    async def connect(self):
+        self.pool = await asyncpg.create_pool(
+            host="localhost",
+            port=5432,
+            database="proximity_db",
+            user="postgres",
+            password="password",
+            min_size=10,
+            max_size=20,
+            command_timeout=60
+        )
+        logger.info("database_connected")
+    
+    async def disconnect(self):
+        if self.pool:
+            await self.pool.close()
+            logger.info("database_disconnected")
+    
+    async def search_nearby(
+        self,
+        lat: float,
+        lon: float,
+        radius: int,
+        place_type: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0
+    ) -> tuple[List[dict], int]:
+        """Search for nearby places using PostGIS"""
+        
+        # Build query
+        type_filter = "AND type = $4" if place_type else ""
+        
+        query = f"""
+            WITH nearby AS (
+                SELECT 
+                    place_id,
+                    name,
+                    address,
+                    latitude,
+                    longitude,
+                    type,
+                    rating,
+                    is_open,
+                    ST_Distance(
+                        location,
+                        ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+                    ) AS distance
+                FROM places
+                WHERE 
+                    ST_DWithin(
+                        location,
+                        ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+                        $3
+                    )
+                    {type_filter}
+            )
+            SELECT * FROM nearby
+            ORDER BY distance ASC
+            LIMIT $5 OFFSET $6
+        """
+        
+        # Execute query
+        params = [lat, lon, radius]
+        if place_type:
+            params.append(place_type)
+        params.extend([limit, offset])
+        
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+            
+            # Get total count
+            count_query = f"""
+                SELECT COUNT(*) FROM places
+                WHERE ST_DWithin(
+                    location,
+                    ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+                    $3
+                )
+                {type_filter}
+            """
+            count_params = [lat, lon, radius]
+            if place_type:
+                count_params.append(place_type)
+            
+            total = await conn.fetchval(count_query, *count_params)
+        
+        return [dict(row) for row in rows], total
+    
+    async def create_place(self, place: PlaceCreate) -> str:
+        """Insert a new place"""
+        import uuid
+        place_id = str(uuid.uuid4())
+        
+        query = """
+            INSERT INTO places (
+                place_id, name, address, latitude, longitude, location, type, phone, website
+            )
+            VALUES ($1, $2, $3, $4, $5, ST_SetSRID(ST_MakePoint($6, $4), 4326)::geography, $7, $8, $9)
+            RETURNING place_id
+        """
+        
+        async with self.pool.acquire() as conn:
+            result = await conn.fetchval(
+                query,
+                place_id,
+                place.name,
+                place.address,
+                place.location.latitude,
+                place.location.longitude,
+                place.location.longitude,
+                place.type,
+                place.phone,
+                place.website
+            )
+        
+        return result
+
+# Redis cache
+class Cache:
+    def __init__(self):
+        self.client: Optional[redis.Redis] = None
+    
+    async def connect(self):
+        self.client = redis.Redis(
+            host="localhost",
+            port=6379,
+            decode_responses=True,
+            socket_connect_timeout=5
+        )
+        logger.info("redis_connected")
+    
+    async def disconnect(self):
+        if self.client:
+            await self.client.close()
+            logger.info("redis_disconnected")
+    
+    def get_cache_key(self, lat: float, lon: float, radius: int, place_type: Optional[str] = None) -> str:
+        """Generate cache key with rounded coordinates"""
+        lat_rounded = round(lat, 2)
+        lon_rounded = round(lon, 2)
+        type_suffix = f":{place_type}" if place_type else ""
+        return f"nearby:{lat_rounded}:{lon_rounded}:{radius}{type_suffix}"
+
+# Application state
+db = Database()
+cache = Cache()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await db.connect()
+    await cache.connect()
+    yield
+    # Shutdown
+    await db.disconnect()
+    await cache.disconnect()
+
+# Create app
+app = FastAPI(
+    title="Proximity Service API",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.example.com"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
+)
+
+# Health check
+@app.get("/health")
+async def health_check():
+    # Check database
+    try:
+        async with db.pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        db_status = "healthy"
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+    
+    # Check Redis
+    try:
+        await cache.client.ping()
+        redis_status = "healthy"
+    except Exception as e:
+        redis_status = f"unhealthy: {str(e)}"
+    
+    return {
+        "status": "healthy" if db_status == "healthy" and redis_status == "healthy" else "degraded",
+        "database": db_status,
+        "redis": redis_status
+    }
+
+# Search endpoint
+@app.get("/v1/places/nearby", response_model=SearchResponse)
+async def search_nearby(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+    radius: int = Query(5000, ge=100, le=50000),
+    type: Optional[str] = Query(None, max_length=50),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    """
+    Search for nearby places
+    
+    - **latitude**: Latitude (-90 to 90)
+    - **longitude**: Longitude (-180 to 180)
+    - **radius**: Search radius in meters (100 to 50000)
+    - **type**: Optional filter by place type
+    - **limit**: Maximum results to return (1 to 100)
+    - **offset**: Pagination offset
+    """
+    logger.info(
+        "search_started",
+        lat=round(latitude, 2),
+        lon=round(longitude, 2),
+        radius=radius,
+        type=type
+    )
+    
+    # Check cache
+    cache_key = cache.get_cache_key(latitude, longitude, radius, type)
+    
+    try:
+        cached = await cache.client.get(cache_key)
+        if cached:
+            logger.info("cache_hit", cache_key=cache_key)
+            import json
+            data = json.loads(cached)
+            return SearchResponse(**data)
+    except Exception as e:
+        logger.warning("cache_error", error=str(e))
+    
+    # Query database
+    try:
+        places, total = await db.search_nearby(
+            latitude, longitude, radius, type, limit, offset
+        )
+        
+        response = SearchResponse(
+            places=[Place(**p) for p in places],
+            total=total,
+            has_more=(offset + limit) < total
+        )
+        
+        # Update cache
+        try:
+            import json
+            await cache.client.setex(
+                cache_key,
+                300,  # 5 minutes TTL
+                json.dumps(response.dict())
+            )
+        except Exception as e:
+            logger.warning("cache_set_error", error=str(e))
+        
+        logger.info(
+            "search_completed",
+            result_count=len(places),
+            total=total
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error("search_error", error=str(e))
+        raise HTTPException(500, "Internal server error")
+
+# Create place endpoint
+@app.post("/v1/places", response_model=dict, status_code=201)
+async def create_place(place: PlaceCreate):
+    """
+    Create a new place
+    
+    Requires authentication (not shown in this example)
+    """
+    try:
+        place_id = await db.create_place(place)
+        
+        logger.info(
+            "place_created",
+            place_id=place_id,
+            name=place.name
+        )
+        
+        return {
+            "place_id": place_id,
+            "message": "Place created successfully"
+        }
+        
+    except Exception as e:
+        logger.error("create_place_error", error=str(e))
+        raise HTTPException(500, "Failed to create place")
+
+# Run with: uvicorn main:app --reload
+```
+
+### Docker Compose Setup
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # PostgreSQL with PostGIS
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: proximity-postgres
+    environment:
+      POSTGRES_DB: proximity_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: proximity-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Server
+  api:
+    build: .
+    container_name: proximity-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/proximity_db
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: proximity-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: proximity-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+```
+
+```sql
+-- init.sql
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+CREATE TABLE places (
+    place_id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    address TEXT NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    location GEOGRAPHY(POINT, 4326),
+    phone VARCHAR(50),
+    website VARCHAR(500),
+    type VARCHAR(50) NOT NULL,
+    rating DECIMAL(2, 1) DEFAULT 0,
+    is_open BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CHECK (latitude >= -90 AND latitude <= 90),
+    CHECK (longitude >= -180 AND longitude <= 180)
+);
+
+CREATE INDEX idx_places_location ON places USING GIST(location);
+CREATE INDEX idx_places_type ON places(type);
+CREATE INDEX idx_places_created_at ON places(created_at);
+```
+
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```txt
+# requirements.txt
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+asyncpg==0.29.0
+redis[hiredis]==5.0.1
+pydantic==2.5.0
+python-jose[cryptography]==3.3.0
+structlog==23.2.0
+prometheus-client==0.19.0
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-instrumentation-fastapi==0.42b0
+opentelemetry-exporter-jaeger==1.21.0
+```
 
 ---
 
@@ -1752,4 +4155,124 @@ graph TB
     style Release fill:#4CAF50
 ```
 
+---
 
+## Quick Reference
+
+### 🎯 Common Tasks
+
+**Starting development:**
+```bash
+# Start services
+docker-compose up -d
+
+# Check health
+curl http://localhost:8000/health
+
+# View logs
+docker-compose logs -f api
+```
+
+**Query examples:**
+```bash
+# Search nearby
+curl "http://localhost:8000/v1/places/nearby?latitude=37.7749&longitude=-122.4194&radius=5000"
+
+# Add place
+curl -X POST http://localhost:8000/v1/places \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "New Cafe",
+    "address": "123 Main St",
+    "location": {"latitude": 37.7749, "longitude": -122.4194},
+    "type": "cafe"
+  }'
+```
+
+### 📚 Key Sections by Role
+
+**For System Design Interviews:**
+- [Back-of-Envelope Estimation](#back-of-envelope-estimation) - Calculate QPS, storage, bandwidth
+- [High-Level Architecture](#high-level-architecture) - System components & data flow
+- [Database Schema](#database-schema) - Table design & indexes
+- [Geospatial Indexing](#geospatial-indexing) - Understand Geohash vs QuadTree
+- [Summary](#summary) - Key decisions & tradeoffs
+
+**For Backend Engineers:**
+- [Production Code Examples](#production-code-examples) - Complete FastAPI implementation
+- [Database Schema](#database-schema) - SQL schema with PostGIS
+- [Geospatial Indexing](#geospatial-indexing) - PostGIS deep dive with examples
+- [Edge Cases & Production Gotchas](#edge-cases--production-gotchas) - Real-world issues
+
+**For DevOps/SRE:**
+- [Monitoring & Observability](#monitoring--observability) - Metrics, alerts, tracing
+- [Production Code Examples](#production-code-examples) - Docker Compose setup
+- [Security & Access Control](#security--access-control) - Authentication, rate limiting
+
+**For Product/Business:**
+- [Functional Requirements](#functional-requirements) - What the system does
+- [API Design](#api-design) - Available endpoints & capabilities
+- [Non-Functional Requirements](#non-functional-requirements) - Performance targets
+
+### 🔑 Key Concepts Explained
+
+| Concept | Where to Learn | Quick Summary |
+|---------|----------------|---------------|
+| **PostGIS** | [Geospatial Indexing](#geospatial-indexing) | PostgreSQL extension for geographic data. Enables fast proximity searches using R-Tree indexes. |
+| **Geohash** | [Geospatial Indexing](#geospatial-indexing) | Encode lat/lon as strings. Similar locations have similar prefixes. Used in Redis GEORADIUS. |
+| **R-Tree Index** | [Geospatial Indexing](#geospatial-indexing) | Hierarchical bounding boxes for spatial data. PostGIS uses this via GiST indexes. |
+| **QuadTree** | [Geospatial Indexing](#geospatial-indexing) | Recursively divide space into 4 quadrants. Alternative to Geohash. |
+| **ST_DWithin** | [Database Schema](#database-schema) | PostGIS function to find points within distance. Uses spatial index. |
+| **GEOGRAPHY vs GEOMETRY** | [Geospatial Indexing](#geospatial-indexing) | Geography=spherical Earth (accurate), Geometry=flat plane (faster). |
+| **Cache Stampede** | [Edge Cases](#edge-cases--production-gotchas) | Multiple requests overwhelm DB when cache expires. Use distributed locks. |
+| **Date Line Problem** | [Edge Cases](#edge-cases--production-gotchas) | Longitude wraparound at ±180°. PostGIS handles automatically. |
+
+### 📊 Performance Benchmarks
+
+```
+Cache Hit (L1):     < 1ms    (5% of requests)
+Cache Hit (L2):     5-10ms   (75% of requests)
+Database Query:     30-100ms (20% of requests)
+
+With 500M places:
+- No index:   40+ minutes  ❌
+- GiST index: 50ms         ✅ (48,000x faster!)
+```
+
+### 🚀 Technology Stack
+
+```
+Backend:        Python 3.11 + FastAPI
+Database:       PostgreSQL 15 + PostGIS 3.3
+Cache:          Redis 7 (with GEORADIUS)
+API Docs:       OpenAPI 3. 0 + Swagger UI
+Monitoring:     Prometheus + Grafana
+Tracing:        OpenTelemetry + Jaeger
+Deployment:     Docker + Docker Compose
+```
+
+### 📖 External Resources
+
+**PostGIS Documentation:**
+- [PostGIS Manual](https://postgis.net/documentation/)
+- [PostGIS Functions Reference](https://postgis.net/docs/reference.html)
+
+**Geospatial Concepts:**
+- [Understanding Geohash](https://www.movable-type.co.uk/scripts/geohash.html)
+- [Uber's H3 Hexagonal Hierarchical Geospatial Indexing System](https://h3geo.org/)
+- [Google S2 Geometry Library](https://s2geometry.io/)
+
+**Production References:**
+- [Uber Engineering: H3 for Ride Pricing](https://www.uber.com/blog/h3/)
+- [Redis Geospatial Commands](https://redis.io/commands/geoadd/)
+- [High Scalability: Tinder Architecture](http://highscalability.com/blog/2016/1/27/tinder-how-does-one-of-the-largest-recommendation-engines-de.html)
+
+---
+
+**This design is production-ready and interview-ready! 🎉**
+
+- ✅ Handles 20K QPS with P99 < 200ms
+- ✅ Scales horizontally with geographic sharding
+- ✅ Complete code examples and deployment configs
+- ✅ Comprehensive monitoring and security
+- ✅ Real-world edge cases handled
