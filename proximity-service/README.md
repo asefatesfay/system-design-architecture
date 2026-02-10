@@ -20,6 +20,10 @@ A service to find nearby places/businesses based on user location (similar to Ye
 - [Database Schema](#database-schema)
 - [Geospatial Indexing](#geospatial-indexing)
 - [Deep Dive](#deep-dive)
+  - [Database Sharding Strategy](#database-sharding-strategy)
+  - [Caching Strategy](#caching-strategy)
+  - [Real-time Updates](#real-time-updates-uber-style)
+  - [Photo Upload & Storage Flow](#photo-upload--storage-flow)
 - [Monitoring & Observability](#monitoring--observability)
 - [Edge Cases & Production Gotchas](#edge-cases--production-gotchas)
 - [Security & Access Control](#security--access-control)
@@ -495,6 +499,100 @@ POST /v1/places/search-area
   "polygon_area_km2": 2.5
 }
 ```
+
+---
+
+#### 7. Request Photo Upload URL
+
+```http
+POST /v1/places/{place_id}/photos/upload-url
+```
+
+**Headers:**
+```
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+```
+?filename=photo.jpg&content_type=image/jpeg
+```
+
+**Response (200 OK):**
+```json
+{
+  "photo_id": "photo_abc123",
+  "upload_url": "https://proximity-photos.s3.amazonaws.com/photos/place_123/original/abc123.jpg?X-Amz-...",
+  "expires_at": "2026-02-10T12:15:00Z",
+  "method": "PUT",
+  "headers": {
+    "Content-Type": "image/jpeg"
+  }
+}
+```
+
+---
+
+#### 8. Confirm Photo Upload
+
+```http
+POST /v1/photos/{photo_id}/complete
+```
+
+**Headers:**
+```
+Authorization: Bearer {token}
+```
+
+**Response (200 OK):**
+```json
+{
+  "photo_id": "photo_abc123",
+  "status": "processing",
+  "message": "Photo is being processed. Check back in a few seconds."
+}
+```
+
+---
+
+#### 9. Get Place Photos
+
+```http
+GET /v1/places/{place_id}/photos
+```
+
+**Response (200 OK):**
+```json
+{
+  "photos": [
+    {
+      "photo_id": "photo_001",
+      "thumb_url": "https://cdn.proximity.example.com/photos/.../thumb/abc.webp",
+      "medium_url": "https://cdn.proximity.example.com/photos/.../medium/abc.webp",
+      "large_url": "https://cdn.proximity.example.com/photos/.../large/abc.webp",
+      "is_primary": true,
+      "uploaded_by": "user_123",
+      "uploaded_at": "2026-02-01T10:30:00Z"
+    }
+  ],
+  "total": 5
+}
+```
+
+---
+
+#### 10. Delete Photo
+
+```http
+DELETE /v1/photos/{photo_id}
+```
+
+**Headers:**
+```
+Authorization: Bearer {token}
+```
+
+**Response (204 No Content)**
 
 ---
 
@@ -2096,6 +2194,743 @@ Optimization:
 - Batch writes
 - Async processing (queue)
 - De-duplicate updates
+
+---
+
+### Photo Upload & Storage Flow
+
+**Challenge:** How do place photos get from user devices into S3 and served via CDN?
+
+#### Architecture Overview
+
+```mermaid
+sequenceDiagram
+    participant Client as Mobile/Web Client
+    participant API as API Server
+    participant S3 as S3 Bucket
+    participant ImgProc as Image Processing<br/>Service
+    participant DB as PostgreSQL
+    participant CDN as CloudFront CDN
+    
+    Note over Client,CDN: Photo Upload Flow
+    
+    Client->>API: 1. Request upload URL<br/>POST /v1/places/{id}/photos/upload-url
+    API->>API: Validate user permissions
+    API->>API: Generate unique filename<br/>photos/{place_id}/{uuid}.jpg
+    API->>S3: Generate pre-signed URL<br/>(valid for 15 minutes)
+    S3-->>API: Pre-signed URL
+    API-->>Client: 200 OK<br/>{upload_url, photo_id}
+    
+    Note over Client,S3: Direct Upload (bypasses API)
+    
+    Client->>S3: 2. PUT photo to pre-signed URL<br/>(multipart for large files)
+    S3-->>Client: 200 OK
+    
+    Client->>API: 3. Confirm upload<br/>POST /v1/photos/{photo_id}/complete
+    
+    Note over API,ImgProc: Async Processing
+    
+    API->>ImgProc: 4. Trigger image processing<br/>(via SNS/SQS or Kafka)
+    
+    par Image Processing Pipeline
+        ImgProc->>S3: Download original
+        ImgProc->>ImgProc: Generate thumbnails<br/>• 150x150 (thumb)<br/>• 600x400 (medium)<br/>• 1200x800 (large)
+        ImgProc->>ImgProc: Optimize (WebP, AVIF)
+        ImgProc->>ImgProc: EXIF removal (privacy)
+        ImgProc->>ImgProc: Virus scan
+        ImgProc->>S3: Upload processed versions
+    end
+    
+    ImgProc->>DB: 5. Update photo metadata<br/>status: 'ready'
+    ImgProc->>API: Callback: Processing complete
+    
+    Note over Client,CDN: Retrieval Flow
+    
+    Client->>API: 6. Get place details<br/>GET /v1/places/{id}
+    API->>DB: Fetch place + photo URLs
+    DB-->>API: Place data + CDN URLs
+    API-->>Client: 200 OK<br/>{..., photos: [<br/>  "https://cdn.example.com/photos/..."<br/>]}
+    
+    Client->>CDN: 7. Request photo
+    
+    alt CDN Cache Hit
+        CDN-->>Client: Photo (cached)
+    else CDN Cache Miss
+        CDN->>S3: Fetch photo
+        S3-->>CDN: Photo
+        CDN->>CDN: Cache (TTL: 1 year)
+        CDN-->>Client: Photo
+    end
+    
+    style S3 fill:#FF9900
+    style ImgProc fill:#4CAF50
+    style CDN fill:#00BCD4
+```
+
+---
+
+#### Approach 1: Pre-signed URLs (Recommended)
+
+**Why pre-signed URLs?**
+- ✅ **Scalability:** Client uploads directly to S3, bypassing API server
+- ✅ **Performance:** No bandwidth bottleneck on API servers
+- ✅ **Cost:** Reduced data transfer costs through API
+- ✅ **Security:** Temporary, time-limited access (typically 15 minutes)
+
+**Implementation:**
+
+```python
+import boto3
+import uuid
+from datetime import datetime, timedelta
+from fastapi import HTTPException
+
+class PhotoUploadService:
+    def __init__(self):
+        self.s3_client = boto3.client(
+            's3',
+            region_name='us-west-2',
+            aws_access_key_id='YOUR_KEY',
+            aws_secret_access_key='YOUR_SECRET'
+        )
+        self.bucket_name = 'proximity-photos'
+        self.cdn_domain = 'https://cdn.proximity.example.com'
+    
+    async def generate_upload_url(
+        self,
+        place_id: str,
+        filename: str,
+        content_type: str,
+        user_id: str
+    ) -> dict:
+        """
+        Generate pre-signed URL for direct S3 upload
+        """
+        # Validate content type
+        allowed_types = ['image/jpeg', 'image/png', 'image/webp']
+        if content_type not in allowed_types:
+            raise HTTPException(400, "Invalid file type")
+        
+        # Validate file extension
+        allowed_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+        ext = filename.lower().split('.')[-1]
+        if f'.{ext}' not in allowed_extensions:
+            raise HTTPException(400, "Invalid file extension")
+        
+        # Generate unique filename
+        photo_id = str(uuid.uuid4())
+        s3_key = f"photos/{place_id}/original/{photo_id}.{ext}"
+        
+        # Generate pre-signed URL (valid for 15 minutes)
+        presigned_url = self.s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': self.bucket_name,
+                'Key': s3_key,
+                'ContentType': content_type,
+                'ContentLength': 10 * 1024 * 1024,  # Max 10MB
+                'Metadata': {
+                    'place_id': place_id,
+                    'user_id': user_id,
+                    'upload_timestamp': datetime.utcnow().isoformat()
+                }
+            },
+            ExpiresIn=900,  # 15 minutes
+            HttpMethod='PUT'
+        )
+        
+        # Store pending upload in database
+        await self.db.execute("""
+            INSERT INTO photos (photo_id, place_id, user_id, s3_key, status, created_at)
+            VALUES ($1, $2, $3, $4, 'pending', $5)
+        """, photo_id, place_id, user_id, s3_key, datetime.utcnow())
+        
+        return {
+            'photo_id': photo_id,
+            'upload_url': presigned_url,
+            'expires_at': (datetime.utcnow() + timedelta(minutes=15)).isoformat(),
+            'method': 'PUT',
+            'headers': {
+                'Content-Type': content_type
+            }
+        }
+    
+    async def confirm_upload(self, photo_id: str, user_id: str):
+        """
+        Confirm upload and trigger processing
+        """
+        # Verify upload exists
+        photo = await self.db.fetchrow("""
+            SELECT photo_id, place_id, s3_key, status
+            FROM photos
+            WHERE photo_id = $1 AND user_id = $2
+        """, photo_id, user_id)
+        
+        if not photo:
+            raise HTTPException(404, "Photo not found")
+        
+        if photo['status'] != 'pending':
+            raise HTTPException(400, "Photo already confirmed")
+        
+        # Verify file exists in S3
+        try:
+            self.s3_client.head_object(
+                Bucket=self.bucket_name,
+                Key=photo['s3_key']
+            )
+        except:
+            raise HTTPException(400, "File not found in S3")
+        
+        # Update status
+        await self.db.execute("""
+            UPDATE photos
+            SET status = 'processing', confirmed_at = $1
+            WHERE photo_id = $2
+        """, datetime.utcnow(), photo_id)
+        
+        # Trigger async image processing
+        await self.queue.publish({
+            'event': 'photo.uploaded',
+            'photo_id': photo_id,
+            'place_id': photo['place_id'],
+            's3_key': photo['s3_key']
+        })
+        
+        return {'status': 'processing', 'photo_id': photo_id}
+
+# FastAPI endpoints
+@app.post("/v1/places/{place_id}/photos/upload-url")
+async def request_upload_url(
+    place_id: str,
+    filename: str,
+    content_type: str,
+    user: dict = Depends(verify_token),
+    photo_service: PhotoUploadService = Depends(get_photo_service)
+):
+    """
+    Step 1: Get pre-signed URL for uploading photo
+    """
+    # Verify user owns this place or has permission
+    place = await db.fetchrow(
+        "SELECT owner_id FROM places WHERE place_id = $1",
+        place_id
+    )
+    if not place or place['owner_id'] != user['user_id']:
+        raise HTTPException(403, "Not authorized")
+    
+    return await photo_service.generate_upload_url(
+        place_id, filename, content_type, user['user_id']
+    )
+
+@app.post("/v1/photos/{photo_id}/complete")
+async def confirm_upload(
+    photo_id: str,
+    user: dict = Depends(verify_token),
+    photo_service: PhotoUploadService = Depends(get_photo_service)
+):
+    """
+    Step 2: Confirm upload completed and trigger processing
+    """
+    return await photo_service.confirm_upload(photo_id, user['user_id'])
+```
+
+**Client-side usage (JavaScript):**
+
+```javascript
+// Step 1: Request upload URL
+async function uploadPhoto(placeId, file) {
+  // Get pre-signed URL
+  const uploadResponse = await fetch(
+    `/v1/places/${placeId}/photos/upload-url?filename=${file.name}&content_type=${file.type}`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    }
+  );
+  
+  const { upload_url, photo_id, headers } = await uploadResponse.json();
+  
+  // Step 2: Upload directly to S3
+  const uploadResult = await fetch(upload_url, {
+    method: 'PUT',
+    headers: headers,
+    body: file
+  });
+  
+  if (!uploadResult.ok) {
+    throw new Error('Upload failed');
+  }
+  
+  // Step 3: Confirm upload
+  await fetch(`/v1/photos/${photo_id}/complete`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+  
+  console.log(`Photo ${photo_id} uploaded successfully!`);
+  return photo_id;
+}
+
+// Usage
+const fileInput = document.getElementById('photo-input');
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    const photoId = await uploadPhoto('place_123', file);
+    console.log('Upload complete:', photoId);
+  }
+});
+```
+
+---
+
+#### Approach 2: Upload Through API (Alternative)
+
+**When to use:**
+- Smaller files (< 5MB)
+- Need server-side validation before upload
+- Simpler client implementation
+
+```python
+from fastapi import UploadFile, File
+import aiofiles
+
+@app.post("/v1/places/{place_id}/photos")
+async def upload_photo(
+    place_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(verify_token),
+    photo_service: PhotoUploadService = Depends(get_photo_service)
+):
+    """
+    Upload photo through API server
+    """
+    # Validate file size
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > MAX_SIZE:
+        raise HTTPException(400, "File too large (max 10MB)")
+    
+    # Validate content type
+    if file.content_type not in ['image/jpeg', 'image/png', 'image/webp']:
+        raise HTTPException(400, "Invalid file type")
+    
+    # Generate unique filename
+    photo_id = str(uuid.uuid4())
+    ext = file.filename.split('.')[-1]
+    s3_key = f"photos/{place_id}/original/{photo_id}.{ext}"
+    
+    # Read file content
+    content = await file.read()
+    
+    # Upload to S3
+    photo_service.s3_client.put_object(
+        Bucket=photo_service.bucket_name,
+        Key=s3_key,
+        Body=content,
+        ContentType=file.content_type,
+        Metadata={
+            'place_id': place_id,
+            'user_id': user['user_id']
+        }
+    )
+    
+    # Store in database
+    await db.execute("""
+        INSERT INTO photos (photo_id, place_id, user_id, s3_key, status)
+        VALUES ($1, $2, $3, $4, 'processing')
+    """, photo_id, place_id, user['user_id'], s3_key)
+    
+    # Trigger processing
+    await queue.publish({
+        'event': 'photo.uploaded',
+        'photo_id': photo_id,
+        's3_key': s3_key
+    })
+    
+    return {'photo_id': photo_id, 'status': 'processing'}
+```
+
+**Comparison:**
+
+| Aspect | Pre-signed URL | Upload via API |
+|--------|----------------|----------------|
+| **Scalability** | ✅ Excellent (bypasses API) | ⚠️ Limited by API servers |
+| **API Bandwidth** | ✅ No bandwidth usage | ❌ Consumes API bandwidth |
+| **Implementation** | ⚠️ More complex (2 steps) | ✅ Simple (1 step) |
+| **Security** | ✅ Time-limited URLs | ✅ Full control |
+| **File Size** | ✅ Large files (multipart) | ⚠️ Limited by timeout |
+| **Cost** | ✅ Lower (direct S3) | ❌ Higher (API egress) |
+| **Recommended** | ✅ Yes, for production | Use for small files only |
+
+---
+
+#### Image Processing Pipeline
+
+**Processing Service (Lambda or Container):**
+
+```python
+import boto3
+from PIL import Image
+import io
+
+class ImageProcessor:
+    def __init__(self):
+        self.s3 = boto3.client('s3')
+        self.bucket = 'proximity-photos'
+    
+    async def process_photo(self, event: dict):
+        """
+        Process uploaded photo: resize, optimize, generate thumbnails
+        """
+        photo_id = event['photo_id']
+        s3_key = event['s3_key']
+        
+        try:
+            # Download original
+            response = self.s3.get_object(Bucket=self.bucket, Key=s3_key)
+            image_data = response['Body'].read()
+            img = Image.open(io.BytesIO(image_data))
+            
+            # Remove EXIF data (privacy)
+            img_no_exif = Image.new(img.mode, img.size)
+            img_no_exif.putdata(list(img.getdata()))
+            
+            # Generate variants
+            variants = {
+                'thumb': (150, 150),
+                'medium': (600, 400),
+                'large': (1200, 800)
+            }
+            
+            urls = {}
+            
+            for variant_name, size in variants.items():
+                # Resize maintaining aspect ratio
+                img_copy = img_no_exif.copy()
+                img_copy.thumbnail(size, Image.LANCZOS)
+                
+                # Save as WebP (better compression)
+                buffer = io.BytesIO()
+                img_copy.save(buffer, format='WebP', quality=85)
+                buffer.seek(0)
+                
+                # Upload to S3
+                variant_key = s3_key.replace('/original/', f'/{variant_name}/')
+                variant_key = variant_key.rsplit('.', 1)[0] + '.webp'
+                
+                self.s3.put_object(
+                    Bucket=self.bucket,
+                    Key=variant_key,
+                    Body=buffer,
+                    ContentType='image/webp',
+                    CacheControl='public, max-age=31536000',  # 1 year
+                )
+                
+                urls[variant_name] = f"https://cdn.proximity.example.com/{variant_key}"
+            
+            # Update database
+            await db.execute("""
+                UPDATE photos
+                SET 
+                    status = 'ready',
+                    thumb_url = $1,
+                    medium_url = $2,
+                    large_url = $3,
+                    processed_at = $4
+                WHERE photo_id = $5
+            """, urls['thumb'], urls['medium'], urls['large'], 
+                datetime.utcnow(), photo_id)
+            
+            logger.info("photo_processed", photo_id=photo_id)
+            
+        except Exception as e:
+            logger.error("photo_processing_failed", photo_id=photo_id, error=str(e))
+            await db.execute("""
+                UPDATE photos SET status = 'failed' WHERE photo_id = $1
+            """, photo_id)
+```
+
+**Trigger with AWS Lambda:**
+
+```yaml
+# serverless.yml
+service: proximity-image-processor
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: us-west-2
+  environment:
+    BUCKET_NAME: proximity-photos
+    DATABASE_URL: ${env:DATABASE_URL}
+
+functions:
+  processImage:
+    handler: handler.process_image
+    timeout: 300
+    memorySize: 2048
+    events:
+      - s3:
+          bucket: proximity-photos
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: photos/
+            - suffix: original/
+
+layers:
+  - arn:aws:lambda:us-west-2:123456789012:layer:pillow:1
+```
+
+---
+
+#### CDN Integration
+
+**CloudFront Configuration:**
+
+```typescript
+// CDN distribution config (Terraform/CloudFormation)
+const cloudfront = new aws.cloudfront.Distribution("cdn", {
+  origins: [{
+    domainName: "proximity-photos.s3.us-west-2.amazonaws.com",
+    originId: "S3-proximity-photos",
+    s3OriginConfig: {
+      originAccessIdentity: cloudfrontOAI.cloudfrontAccessIdentityPath,
+    },
+  }],
+  
+  enabled: true,
+  defaultCacheBehavior: {
+    allowedMethods: ["GET", "HEAD", "OPTIONS"],
+    cachedMethods: ["GET", "HEAD"],
+    targetOriginId: "S3-proximity-photos",
+    
+    forwardedValues: {
+      queryString: false,
+      cookies: { forward: "none" },
+      headers: ["Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"],
+    },
+    
+    viewerProtocolPolicy: "redirect-to-https",
+    minTtl: 0,
+    defaultTtl: 86400,      // 1 day
+    maxTtl: 31536000,       // 1 year
+    compress: true,          // Enable gzip/brotli
+  },
+  
+  // Multiple edge locations for low latency
+  priceClass: "PriceClass_100",  // US, Canada, Europe
+  
+  restrictions: {
+    geoRestriction: {
+      restrictionType: "none",
+    },
+  },
+  
+  viewerCertificate: {
+    acmCertificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/...",
+    sslSupportMethod: "sni-only",
+    minimumProtocolVersion: "TLSv1.2_2021",
+  },
+});
+```
+
+**S3 Bucket Policy (allow CloudFront access only):**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowCloudFrontAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity E1234567890ABC"
+      },
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::proximity-photos/*"
+    }
+  ]
+}
+```
+
+---
+
+#### Database Schema for Photos
+
+```sql
+CREATE TABLE photos (
+    photo_id VARCHAR(36) PRIMARY KEY,
+    place_id VARCHAR(255) NOT NULL REFERENCES places(place_id) ON DELETE CASCADE,
+    user_id VARCHAR(255) NOT NULL,
+    
+    -- S3 keys
+    s3_key TEXT NOT NULL,           -- Original file
+    
+    -- Processed URLs (via CDN)
+    thumb_url TEXT,                 -- 150x150
+    medium_url TEXT,                -- 600x400
+    large_url TEXT,                 -- 1200x800
+    
+    -- Metadata
+    status VARCHAR(20) DEFAULT 'pending',  -- pending, processing, ready, failed
+    file_size_bytes BIGINT,
+    width INTEGER,
+    height INTEGER,
+    format VARCHAR(10),             -- jpg, png, webp
+    
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    confirmed_at TIMESTAMP,
+    processed_at TIMESTAMP,
+    
+    -- Display order
+    display_order INTEGER DEFAULT 0,
+    is_primary BOOLEAN DEFAULT false,
+    
+    CHECK (status IN ('pending', 'processing', 'ready', 'failed'))
+);
+
+CREATE INDEX idx_photos_place ON photos(place_id);
+CREATE INDEX idx_photos_user ON photos(user_id);
+CREATE INDEX idx_photos_status ON photos(status);
+CREATE INDEX idx_photos_display_order ON photos(place_id, display_order);
+```
+
+---
+
+#### Retrieval Flow
+
+**API returns CDN URLs:**
+
+```python
+@app.get("/v1/places/{place_id}")
+async def get_place(place_id: str):
+    # Fetch place with photos
+    result = await db.fetchrow("""
+        SELECT 
+            p.*,
+            ARRAY_AGG(
+                json_build_object(
+                    'photo_id', ph.photo_id,
+                    'thumb_url', ph.thumb_url,
+                    'medium_url', ph.medium_url,
+                    'large_url', ph.large_url,
+                    'is_primary', ph.is_primary
+                ) ORDER BY ph.display_order
+            ) FILTER (WHERE ph.status = 'ready') as photos
+        FROM places p
+        LEFT JOIN photos ph ON p.place_id = ph.place_id
+        WHERE p.place_id = $1
+        GROUP BY p.place_id
+    """, place_id)
+    
+    return {
+        'place_id': result['place_id'],
+        'name': result['name'],
+        'photos': result['photos'] or [],
+        # ... other fields
+    }
+
+# Response:
+{
+  "place_id": "place_123",
+  "name": "Blue Bottle Coffee",
+  "photos": [
+    {
+      "photo_id": "photo_001",
+      "thumb_url": "https://cdn.proximity.example.com/photos/place_123/thumb/abc.webp",
+      "medium_url": "https://cdn.proximity.example.com/photos/place_123/medium/abc.webp",
+      "large_url": "https://cdn.proximity.example.com/photos/place_123/large/abc.webp",
+      "is_primary": true
+    }
+  ]
+}
+```
+
+**Client fetches from CDN:**
+```javascript
+// Load images with lazy loading
+<img 
+  src="https://cdn.proximity.example.com/photos/place_123/thumb/abc.webp"
+  data-src="https://cdn.proximity.example.com/photos/place_123/large/abc.webp"
+  loading="lazy"
+  alt="Place photo"
+/>
+```
+
+---
+
+#### Cost Optimization
+
+**S3 Lifecycle Policy:**
+
+```json
+{
+  "Rules": [
+    {
+      "Id": "DeletePendingUploadsAfter1Day",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "photos/",
+        "Tag": {
+          "Key": "status",
+          "Value": "pending"
+        }
+      },
+      "Expiration": {
+        "Days": 1
+      }
+    },
+    {
+      "Id": "TransitionOldPhotosToIA",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "photos/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 365,
+          "StorageClass": "GLACIER"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Monitoring photo storage:**
+
+```python
+# Track photo metrics
+PHOTO_UPLOAD_SIZE = Histogram(
+    'photo_upload_size_bytes',
+    'Size of uploaded photos',
+    buckets=[100_000, 500_000, 1_000_000, 5_000_000, 10_000_000]
+)
+
+PHOTO_PROCESSING_DURATION = Histogram(
+    'photo_processing_duration_seconds',
+    'Time to process photos'
+)
+
+PHOTO_STATUS = Counter(
+    'photo_status_total',
+    'Photo processing status',
+    ['status']  # pending, processing, ready, failed
+)
+```
 
 ---
 
@@ -4181,12 +5016,27 @@ curl "http://localhost:8000/v1/places/nearby?latitude=37.7749&longitude=-122.419
 # Add place
 curl -X POST http://localhost:8000/v1/places \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
     "name": "New Cafe",
     "address": "123 Main St",
     "location": {"latitude": 37.7749, "longitude": -122.4194},
     "type": "cafe"
   }'
+
+# Upload photo (2-step process)
+# Step 1: Get upload URL
+curl -X POST "http://localhost:8000/v1/places/place_123/photos/upload-url?filename=photo.jpg&content_type=image/jpeg" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Step 2: Upload to S3 (use upload_url from response)
+curl -X PUT "PRESIGNED_S3_URL" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+
+# Step 3: Confirm upload
+curl -X POST "http://localhost:8000/v1/photos/PHOTO_ID/complete" \
+  -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 ### 📚 Key Sections by Role
@@ -4224,6 +5074,8 @@ curl -X POST http://localhost:8000/v1/places \
 | **QuadTree** | [Geospatial Indexing](#geospatial-indexing) | Recursively divide space into 4 quadrants. Alternative to Geohash. |
 | **ST_DWithin** | [Database Schema](#database-schema) | PostGIS function to find points within distance. Uses spatial index. |
 | **GEOGRAPHY vs GEOMETRY** | [Geospatial Indexing](#geospatial-indexing) | Geography=spherical Earth (accurate), Geometry=flat plane (faster). |
+| **Pre-signed URLs** | [Photo Upload & Storage](#photo-upload--storage-flow) | Time-limited S3 URLs for direct client uploads. Bypasses API servers for scalability. |
+| **CDN** | [Photo Upload & Storage](#photo-upload--storage-flow) | Content Delivery Network caches photos at edge locations for low latency worldwide. |
 | **Cache Stampede** | [Edge Cases](#edge-cases--production-gotchas) | Multiple requests overwhelm DB when cache expires. Use distributed locks. |
 | **Date Line Problem** | [Edge Cases](#edge-cases--production-gotchas) | Longitude wraparound at ±180°. PostGIS handles automatically. |
 
@@ -4245,7 +5097,10 @@ With 500M places:
 Backend:        Python 3.11 + FastAPI
 Database:       PostgreSQL 15 + PostGIS 3.3
 Cache:          Redis 7 (with GEORADIUS)
-API Docs:       OpenAPI 3. 0 + Swagger UI
+Storage:        AWS S3 (photo storage)
+CDN:            CloudFront (global photo delivery)
+Image Proc:     Pillow/PIL (resize, optimize)
+API Docs:       OpenAPI 3.0 + Swagger UI
 Monitoring:     Prometheus + Grafana
 Tracing:        OpenTelemetry + Jaeger
 Deployment:     Docker + Docker Compose
@@ -4273,6 +5128,7 @@ Deployment:     Docker + Docker Compose
 
 - ✅ Handles 20K QPS with P99 < 200ms
 - ✅ Scales horizontally with geographic sharding
+- ✅ Photo upload with S3 pre-signed URLs & CDN delivery
 - ✅ Complete code examples and deployment configs
 - ✅ Comprehensive monitoring and security
 - ✅ Real-world edge cases handled

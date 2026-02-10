@@ -42,6 +42,8 @@ tags:
     description: Search for nearby places
   - name: Places
     description: CRUD operations for places
+  - name: Photos
+    description: Photo upload and management for places
   - name: Health
     description: Health check endpoints
 
@@ -454,6 +456,235 @@ paths:
                     type: string
                     example: "1.0.0"
 
+  /places/{place_id}/photos/upload-url:
+    post:
+      tags:
+        - Photos
+      summary: Request photo upload URL
+      description: |
+        Request a pre-signed S3 URL for uploading a photo directly to storage.
+        This endpoint returns a temporary URL that allows the client to upload
+        photos directly to S3 without going through the API server.
+      operationId: requestPhotoUploadUrl
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: place_id
+          in: path
+          required: true
+          description: Unique identifier for the place
+          schema:
+            type: string
+          example: "place_123"
+        - name: filename
+          in: query
+          required: true
+          description: Original filename of the photo
+          schema:
+            type: string
+          example: "photo.jpg"
+        - name: content_type
+          in: query
+          required: true
+          description: MIME type of the photo
+          schema:
+            type: string
+            enum:
+              - image/jpeg
+              - image/png
+              - image/webp
+          example: "image/jpeg"
+      
+      responses:
+        '200':
+          description: Upload URL generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  photo_id:
+                    type: string
+                    description: Unique identifier for the photo
+                    example: "photo_abc123"
+                  upload_url:
+                    type: string
+                    description: Pre-signed S3 URL for direct upload
+                    example: "https://proximity-photos.s3.amazonaws.com/photos/place_123/original/abc123.jpg?X-Amz-..."
+                  expires_at:
+                    type: string
+                    format: date-time
+                    description: When the upload URL expires (typically 15 minutes)
+                    example: "2026-02-10T12:15:00Z"
+                  method:
+                    type: string
+                    description: HTTP method to use for upload
+                    example: "PUT"
+                  headers:
+                    type: object
+                    description: Required headers for the upload request
+                    properties:
+                      Content-Type:
+                        type: string
+                        example: "image/jpeg"
+        
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        
+        '403':
+          description: Not authorized to upload photos for this place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "FORBIDDEN"
+                message: "You don't have permission to upload photos for this place"
+
+  /photos/{photo_id}/complete:
+    post:
+      tags:
+        - Photos
+      summary: Confirm photo upload
+      description: |
+        Confirm that a photo has been successfully uploaded to S3 and trigger
+        the image processing pipeline (resize, optimization, thumbnail generation).
+      operationId: confirmPhotoUpload
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: photo_id
+          in: path
+          required: true
+          description: Unique identifier for the photo
+          schema:
+            type: string
+          example: "photo_abc123"
+      
+      responses:
+        '200':
+          description: Upload confirmed and processing started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  photo_id:
+                    type: string
+                    example: "photo_abc123"
+                  status:
+                    type: string
+                    enum:
+                      - processing
+                      - ready
+                      - failed
+                    example: "processing"
+                  message:
+                    type: string
+                    example: "Photo is being processed. Check back in a few seconds."
+        
+        '400':
+          description: Invalid photo ID or photo already confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "INVALID_STATE"
+                message: "Photo already confirmed or file not found in S3"
+        
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /places/{place_id}/photos:
+    get:
+      tags:
+        - Photos
+      summary: Get place photos
+      description: Retrieve all photos for a specific place
+      operationId: getPlacePhotos
+      parameters:
+        - name: place_id
+          in: path
+          required: true
+          description: Unique identifier for the place
+          schema:
+            type: string
+          example: "place_123"
+      
+      responses:
+        '200':
+          description: Photos retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  photos:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Photo'
+                  total:
+                    type: integer
+                    example: 5
+              example:
+                photos:
+                  - photo_id: "photo_001"
+                    thumb_url: "https://cdn.proximity.example.com/photos/place_123/thumb/abc.webp"
+                    medium_url: "https://cdn.proximity.example.com/photos/place_123/medium/abc.webp"
+                    large_url: "https://cdn.proximity.example.com/photos/place_123/large/abc.webp"
+                    is_primary: true
+                    uploaded_by: "user_123"
+                    uploaded_at: "2026-02-01T10:30:00Z"
+                total: 5
+        
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /photos/{photo_id}:
+    delete:
+      tags:
+        - Photos
+      summary: Delete photo
+      description: Delete a photo from a place (requires authentication)
+      operationId: deletePhoto
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: photo_id
+          in: path
+          required: true
+          description: Unique identifier for the photo
+          schema:
+            type: string
+          example: "photo_abc123"
+      
+      responses:
+        '204':
+          description: Photo deleted successfully
+        
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        
+        '403':
+          description: Not authorized to delete this photo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "FORBIDDEN"
+                message: "You don't have permission to delete this photo"
+        
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -723,6 +954,47 @@ components:
           minimum: 1
           maximum: 100
           default: 50
+    
+    Photo:
+      type: object
+      required:
+        - photo_id
+        - thumb_url
+        - medium_url
+        - large_url
+      properties:
+        photo_id:
+          type: string
+          description: Unique identifier for the photo
+          example: "photo_abc123"
+        thumb_url:
+          type: string
+          format: uri
+          description: URL for thumbnail version (150x150)
+          example: "https://cdn.proximity.example.com/photos/place_123/thumb/abc.webp"
+        medium_url:
+          type: string
+          format: uri
+          description: URL for medium version (600x400)
+          example: "https://cdn.proximity.example.com/photos/place_123/medium/abc.webp"
+        large_url:
+          type: string
+          format: uri
+          description: URL for large version (1200x800)
+          example: "https://cdn.proximity.example.com/photos/place_123/large/abc.webp"
+        is_primary:
+          type: boolean
+          description: Whether this is the primary photo for the place
+          example: true
+        uploaded_by:
+          type: string
+          description: User ID of the uploader
+          example: "user_123"
+        uploaded_at:
+          type: string
+          format: date-time
+          description: Timestamp when the photo was uploaded
+          example: "2026-02-01T10:30:00Z"
     
     Error:
       type: object
