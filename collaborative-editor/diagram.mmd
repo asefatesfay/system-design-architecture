@@ -1,0 +1,40 @@
+%% Mermaid architecture diagram for collaborative editor
+flowchart LR
+  subgraph Clients
+    C1[Browser Client A]
+    C2[Browser Client B]
+  end
+
+  Auth[Auth / API Gateway]
+  LB[Load Balancer / Router]
+  subgraph Cluster
+    Node1[Collab Node 1]
+    Node2[Collab Node 2]
+    Redis[Presence / PubSub]
+    Streams[Op-Log (Kafka/Redis Streams)]
+    ObjectStore[Snapshots (S3/GCS)]
+    Postgres[Metadata / ACLs]
+    Workers[Background Workers]
+  end
+
+  C1 -- HTTP auth token --> Auth
+  C2 -- HTTP auth token --> Auth
+  C1 -- WS --> LB
+  C2 -- WS --> LB
+  LB -- route(document_id) --> Node1
+  LB -- route(document_id) --> Node2
+
+  Node1 -- publish ops --> Streams
+  Node2 -- publish ops --> Streams
+  Node1 -- snapshot --> ObjectStore
+  Node2 -- snapshot --> ObjectStore
+  Node1 -- presence --> Redis
+  Node2 -- presence --> Redis
+  Node1 -- metadata --> Postgres
+  Workers -- compact/replay --> Streams
+  Workers -- write snapshot --> ObjectStore
+
+  Streams -- replay --> Node1
+  Streams -- replay --> Node2
+  Redis -- broadcast presence --> Node1
+  Redis -- broadcast presence --> Node2
