@@ -486,3 +486,311 @@ Cache cold start:
 - Picking technologies without justification ("I'll use Kafka" with no reason)
 - Ignoring failure modes
 - Treating the design as final rather than iterative
+
+---
+
+## Breaking Through Mental Blocks
+
+Mental blocks in system design interviews are almost never about not knowing enough. They're caused by a small set of specific traps. Here's how to identify which trap you're in and get out of it.
+
+---
+
+### The 5 Mental Block Patterns
+
+```
+Block 1 → "I don't know where to start"         → Use the anchor question
+Block 2 → "I don't know which technology to use" → Use the constraint filter
+Block 3 → "I'm going too deep too fast"          → Use the zoom-out reset
+Block 4 → "I've designed myself into a corner"   → Use the constraint swap
+Block 5 → "My mind goes blank under pressure"    → Use the narrate-first technique
+```
+
+---
+
+### Block 1 — "I don't know where to start"
+
+**What's happening:** The problem feels too big. You're trying to hold the whole system in your head at once before drawing anything.
+
+**The fix — The Anchor Question:**
+
+Stop. Ask yourself one question: *"What is the single most important thing this system must do?"*
+
+Not the full feature list. One thing. That becomes your anchor. Design outward from it.
+
+**Example — "Design Uber"**
+
+You freeze because Uber has: ride matching, GPS tracking, payments, ratings, surge pricing, driver onboarding, notifications...
+
+Apply the anchor question:
+> "The single most important thing Uber must do is: connect a rider to a nearby driver within seconds."
+
+Now you have a starting point. Draw just that flow first:
+
+```mermaid
+flowchart LR
+    Rider["Rider requests ride\n(location)"]
+    Find["Find nearby\navailable drivers"]
+    Match["Match rider\nto best driver"]
+    Notify["Notify driver\nof trip offer"]
+    Accept["Driver accepts"]
+    Done["Trip begins"]
+
+    Rider --> Find --> Match --> Notify --> Accept --> Done
+```
+
+Everything else (payments, ratings, surge) is secondary. You can add it after the core flow is solid. The anchor prevents you from drowning in scope.
+
+---
+
+### Block 2 — "I don't know which technology to use"
+
+**What's happening:** You're trying to pick a database (or queue, or cache) before you know what constraints matter. Without constraints, every option looks equally valid — which is paralyzing.
+
+**The fix — The Constraint Filter:**
+
+Before naming any technology, answer these four questions about the data:
+
+```
+1. How much data? (KB / GB / TB / PB)
+2. How fast does it need to be written? (writes/s)
+3. How fast does it need to be read? (reads/s)
+4. What's the cost of wrong data? (strong consistency vs. eventual)
+```
+
+The answers eliminate options. You don't choose a database — the constraints choose it for you.
+
+**Example — "Design a notification system. What database do you use?"**
+
+Without constraints, you're stuck. Apply the filter:
+
+```
+1. How much data?
+   100M users × 50 notifications each = 5B rows × 200 bytes = 1 TB
+   → Not huge. Most databases handle this.
+
+2. Write speed?
+   100M users × 10 notifications/day = 1B/day → ~11,600 writes/s
+   → Moderate-high. Postgres starts struggling above ~10K writes/s.
+   → Cassandra handles 100K+ writes/s easily.
+
+3. Read speed?
+   User opens app → fetch last 20 notifications
+   100M DAU × 5 opens/day = 500M reads/day → ~5,800 reads/s
+   → Moderate. Most databases handle this.
+
+4. Cost of wrong data?
+   Seeing a notification twice: annoying but not catastrophic.
+   Missing a notification: bad UX but not a financial error.
+   → Eventual consistency is acceptable.
+
+Constraints say: high write throughput + eventual consistency + time-series access
+→ Cassandra. Not because you memorized "use Cassandra for notifications"
+   but because the constraints eliminated everything else.
+```
+
+**The constraint filter for common data stores:**
+
+```mermaid
+flowchart TD
+    Q1{"Need ACID\ntransactions?"}
+    Q2{"Write throughput\n> 10K/s?"}
+    Q3{"Need full-text\nsearch?"}
+    Q4{"Data is\ngraph-shaped?"}
+    Q5{"Need sub-ms\nreads?"}
+
+    SQL["SQL\n(Postgres, MySQL)\nACID, complex queries"]
+    Cassandra["Cassandra / ScyllaDB\nhigh write throughput\ntime-series"]
+    Elastic["Elasticsearch\nfull-text search\nfaceted filtering"]
+    Graph["Graph DB\n(Neo4j) or\ncustom graph store"]
+    Redis["Redis\nin-memory\nsub-ms reads"]
+
+    Q1 -->|"Yes"| SQL
+    Q1 -->|"No"| Q2
+    Q2 -->|"Yes"| Cassandra
+    Q2 -->|"No"| Q3
+    Q3 -->|"Yes"| Elastic
+    Q3 -->|"No"| Q4
+    Q4 -->|"Yes"| Graph
+    Q4 -->|"No"| Q5
+    Q5 -->|"Yes"| Redis
+    Q5 -->|"No"| SQL
+```
+
+---
+
+### Block 3 — "I'm going too deep too fast"
+
+**What's happening:** You started explaining the internals of one component (e.g., how the database sharding works) before finishing the high-level design. Now you've lost the thread and don't know how the pieces connect.
+
+**The fix — The Zoom-Out Reset:**
+
+Say out loud: *"Let me step back and make sure the high-level picture is complete before going deeper."*
+
+Then draw the full system as boxes — no internals, just names and arrows. Only after every box is on the diagram do you zoom into any one of them.
+
+**Example — "Design a rate limiter"**
+
+You start explaining token bucket algorithms in detail at minute 3. You've lost the interviewer.
+
+Zoom-out reset:
+
+```mermaid
+graph LR
+    Client["Client"]
+    RL["Rate Limiter\n(middleware)"]
+    API["API Server"]
+    Redis["Redis\n(counters)"]
+    Reject["429 Too Many\nRequests"]
+
+    Client --> RL
+    RL -->|"under limit"| API
+    RL -->|"over limit"| Reject
+    RL --> Redis
+```
+
+Now you have 5 boxes. The interviewer can see the whole system. Now you can zoom into the rate limiter box and explain token bucket — with context.
+
+**The rule:** Never go deeper than level 2 until level 1 is complete.
+
+```
+Level 1: boxes and arrows (the whole system)
+Level 2: internals of one box (algorithm, schema, API)
+Level 3: edge cases and failure modes within that box
+```
+
+---
+
+### Block 4 — "I've designed myself into a corner"
+
+**What's happening:** You made an early decision that seemed fine, but now you've realized it creates a problem you can't solve. For example: you chose a single SQL database, and now the interviewer asks how you handle 1M writes/s.
+
+**The fix — The Constraint Swap:**
+
+Name the constraint that your current design violates, then swap the component that can't satisfy it. Don't apologize — this is normal engineering.
+
+Say: *"My current design uses X, which works well for [constraint A] but breaks at [constraint B]. Let me swap it for Y which handles [constraint B]."*
+
+**Example — "Design a leaderboard. You chose Postgres. Now handle 500K score updates/s."**
+
+You're in a corner: Postgres can't handle 500K writes/s.
+
+Apply the constraint swap:
+
+```
+Current design: Postgres for scores
+Constraint violated: 500K writes/s (Postgres limit: ~10K/s)
+
+Swap: Replace Postgres writes with Redis sorted sets for the hot path
+
+New design:
+  Score update → Redis ZADD leaderboard <score> <user_id>  (O(log N), sub-ms)
+  Leaderboard read → Redis ZREVRANGE leaderboard 0 99      (top 100, O(log N + 100))
+  Persistence → async flush to Postgres every 60s for durability
+
+Result: Redis handles 500K writes/s easily.
+        Postgres retains the durable record.
+        Both constraints satisfied.
+```
+
+```mermaid
+flowchart LR
+    Game["Game Server\n500K score updates/s"]
+    Redis["Redis Sorted Set\n(hot leaderboard)\nZADD, ZREVRANGE"]
+    Flush["Async flush\nevery 60s"]
+    Postgres["Postgres\n(durable record\nhistorical scores)"]
+    Read["Leaderboard API\nreads from Redis\n< 1ms"]
+
+    Game --> Redis --> Flush --> Postgres
+    Redis --> Read
+```
+
+The constraint swap works because you're not abandoning your design — you're surgically replacing the one component that can't meet the new constraint.
+
+---
+
+### Block 5 — "My mind goes blank under pressure"
+
+**What's happening:** Anxiety, not ignorance. The pressure of being watched causes working memory to collapse. You know this stuff — you just can't access it right now.
+
+**The fix — The Narrate-First Technique:**
+
+Stop trying to think silently. Start talking. Say exactly what you're doing, even if it's obvious.
+
+> "I'm going to start by writing down the functional requirements so I don't lose track of scope..."
+> "I'm thinking about the write path first because that's where the scale constraint lives..."
+> "I'm not sure about this part yet — let me put a placeholder and come back to it..."
+
+Narrating does three things:
+1. It buys you time while your brain catches up
+2. It shows the interviewer your thought process (which is what they're actually evaluating)
+3. It breaks the silence loop — silence amplifies anxiety; talking reduces it
+
+**Example — You freeze on "Design a search autocomplete system"**
+
+Instead of sitting silently:
+
+> "Okay, let me think through this out loud. The core feature is: user types 'app' and sees suggestions like 'apple', 'application', 'app store'. So the read path is: given a prefix, return top-N matching strings ranked by popularity. That's the core problem. Let me figure out what data structure handles prefix lookups efficiently..."
+
+Now you're moving. The trie data structure will come to you once you've articulated the problem. The narration unlocked it.
+
+**The narrate-first script for when you're completely stuck:**
+
+```
+"Let me think about this from first principles."
+  → Buys 10 seconds, signals you're methodical not lost
+
+"The core constraint here is [X]."
+  → Forces you to identify what actually matters
+
+"If I ignore scale for a moment, the simplest solution would be [Y]."
+  → Gives you a starting point; you can add scale after
+
+"The problem with [Y] at scale is [Z]."
+  → Now you're reasoning about trade-offs, which is the interview
+
+"So I need to replace [Y] with something that handles [Z]."
+  → You're back on track
+```
+
+---
+
+### The Mental Block Decision Tree
+
+Use this when you feel stuck:
+
+```mermaid
+flowchart TD
+    Stuck["Feeling stuck"]
+    Q1{"Do I know\nwhere to start?"}
+    Q2{"Do I know\nwhich tech to use?"}
+    Q3{"Am I too deep\nin one component?"}
+    Q4{"Did I design\nmyself into a corner?"}
+    Q5{"Is my mind\ncompletely blank?"}
+
+    A1["Block 1:\nAnchor Question\n'What's the ONE thing\nthis system must do?'"]
+    A2["Block 2:\nConstraint Filter\n'How much data?\nHow fast? Cost of wrong?'"]
+    A3["Block 3:\nZoom-Out Reset\n'Let me step back and\ncomplete the high-level first'"]
+    A4["Block 4:\nConstraint Swap\n'X breaks at Y constraint.\nLet me swap X for Z.'"]
+    A5["Block 5:\nNarrate First\n'Let me think out loud...'"]
+
+    Stuck --> Q1
+    Q1 -->|"No"| A1
+    Q1 -->|"Yes"| Q2
+    Q2 -->|"No"| A2
+    Q2 -->|"Yes"| Q3
+    Q3 -->|"Yes"| A3
+    Q3 -->|"No"| Q4
+    Q4 -->|"Yes"| A4
+    Q4 -->|"No"| Q5
+    Q5 -->|"Yes"| A5
+```
+
+---
+
+### One More Thing — The "I Don't Know" Move
+
+If you genuinely don't know something (a specific technology, an algorithm), say so directly and reason around it. This is better than guessing and getting caught.
+
+> "I'm not familiar with the internals of Kafka's replication protocol, but I know it provides durable, ordered, partitioned log storage — which is what I need here. I'd use it for that property and look up the specifics before implementation."
+
+This shows intellectual honesty and the ability to reason about systems at the right level of abstraction — both of which interviewers value more than memorized trivia.
