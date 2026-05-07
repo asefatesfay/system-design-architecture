@@ -228,3 +228,37 @@ Trending is based on **velocity** (rate of increase), not absolute count. "COVID
 | Trending computation | Stream processing (Flink/Spark Streaming); approximate counting (Count-Min Sketch) for memory efficiency |
 | Search at scale | Elasticsearch with near-real-time indexing; tweets indexed within 10s of posting |
 | Like/retweet count accuracy | Approximate with Redis counters; reconcile with exact DB count hourly |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "You use a hybrid fan-out model. Elon Musk has 150M followers. He tweets 10 times a day. That's 1.5B fan-in reads per day just for his followers to see his tweets. How do you make this fast?"**
+
+> The celebrity's tweets are stored in a dedicated "celebrity tweet cache" — a Redis sorted set per celebrity: `celebrity_tweets:{user_id}` → sorted by timestamp, capped at the last 100 tweets. When a follower opens their feed, the Timeline Service fetches their pre-computed timeline (normal follows) from Redis, then fetches the last 20 tweets from each celebrity they follow from the celebrity cache, and merges them by timestamp. The merge is done in the application layer — it's just a sorted merge of small lists. The celebrity cache is updated on every tweet (one write to Redis, not 150M). The read cost: each follower's feed load makes 1 read to their timeline cache + N reads to celebrity caches (one per celebrity they follow). If a user follows 5 celebrities, that's 6 Redis reads total — still fast. The key insight: we trade write simplicity (one write per celebrity tweet) for slightly more complex reads (merge at read time). At 150M followers, this is the only viable approach.
+
+---
+
+**Q2: "Twitter shows you tweets in reverse chronological order, but also injects 'recommended' tweets from accounts you don't follow. How does the ranking layer work without slowing down feed loads?"**
+
+> The ranking layer operates on the pre-fetched candidate set, not on the full tweet corpus. The Timeline Service fetches 100 tweet candidates from the timeline cache (more than the 20 we'll show). The ranking model scores each candidate on: recency (primary), engagement velocity (likes/retweets in last hour), user affinity (how often you engage with this author), and content quality signals. This scoring takes ~5ms for 100 candidates — it's a lightweight model running in-process, not a separate ML service call. The "recommended" tweets (from accounts you don't follow) are pre-computed by a separate recommendation pipeline and stored in a `recommended:{user_id}` Redis key. The Timeline Service fetches both the timeline candidates and the recommended candidates, merges them, runs the ranking model, and returns the top 20. Total latency: ~20ms for the Redis fetches + 5ms for ranking = 25ms. Well within the 200ms target. The ranking model is updated hourly — it doesn't need to be real-time because the signals it uses (engagement velocity) are already near-real-time.
+
+---
+
+**Q3: "A tweet goes viral — 500K retweets in 10 minutes. Each retweet fans out to the retweeter's followers. How does your system not collapse under this write storm?"**
+
+> Retweet fan-out is rate-limited and async. When a retweet happens, the Fan-out Service publishes an event to Kafka. The Kafka consumer processes fan-out events at a controlled rate — if the queue backs up, fan-out slows down but doesn't crash. The result: followers see the viral tweet in their feed within seconds if they're early, or within minutes if they're late. This is acceptable — eventual consistency for feed delivery is fine. The write storm mitigation: the Fan-out Service has a circuit breaker. If a single tweet generates > 10K fan-out events per second (viral threshold), it switches to pull mode for that tweet — instead of pushing to all followers, it stores the tweet in a "viral tweet cache" and followers pull it at read time. This is the same celebrity mechanism applied dynamically. The threshold is detected by monitoring the Kafka consumer lag for a specific tweet_id partition. The switch from push to pull happens automatically within 30 seconds of the viral threshold being crossed.
+
+---
+
+**Q4: "Twitter has a 'Moments' feature showing curated news. A breaking news event happens — a major earthquake. Thousands of tweets about it appear in seconds. How does the trending topics system detect this in near-real-time?"**
+
+> Trending detection uses a sliding window count with velocity scoring. The tweet stream flows through a stream processing job (Flink/Spark Streaming). For each tweet, we extract hashtags and key phrases (NLP). We maintain a sliding window count per term: count of occurrences in the last 5 minutes, 15 minutes, and 1 hour. Trending score = (count_5min / count_1hour) — this is the velocity ratio. A term that went from 100 occurrences/hour to 10,000 occurrences in 5 minutes has a velocity ratio of 100× — clearly trending. A term that's always at 10,000/hour has a ratio of 1× — not trending. The stream processor updates the trending scores every 30 seconds and writes the top-50 terms per region to Redis. The Trending API reads from Redis — sub-millisecond response. For the earthquake example: within 60-90 seconds of the first tweets, "earthquake" and the location name cross the velocity threshold and appear in trending. The 30-second update cycle means trending topics are at most 30 seconds stale.
+
+---
+
+**Q5: "You store tweets in Cassandra partitioned by user_id. A user deletes their account. How do you delete all their tweets, replies, and likes across the entire system?"**
+
+> Account deletion is an async, multi-step process — not a synchronous delete. When a user requests deletion: immediately mark the account as `pending_deletion` in the User DB and stop serving their content (profile returns 404, tweets are filtered from feeds). Then publish a `user_deletion_requested` event to Kafka. A deletion worker consumes this event and runs the cleanup pipeline: delete tweets from Cassandra (query the `user_tweets` partition — all tweets for this user_id are co-located, so this is one partition scan), remove their tweet_ids from any follower feed caches in Redis (expensive — we do this lazily: feed reads filter out deleted user content at read time), delete their likes and retweets from the engagement tables, remove them from the social graph (follower/following tables). The full deletion takes 30 days — this is intentional, to allow account recovery if the deletion was accidental. After 30 days, the account is permanently deleted and the data is purged from backups on the next backup rotation cycle. The user-visible experience: account appears deleted immediately (pending_deletion state), but the data cleanup happens in the background.

@@ -498,3 +498,47 @@ These two systems from the same image illustrate how different the same "scale" 
 | Hard problem | Connection scale, delivery guarantees | Transcoding pipeline, CDN cache hit rate |
 
 The language choices follow from these constraints — not the other way around.
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "A video goes viral — 10 million people try to watch it in the first 5 minutes after upload. The video was just transcoded 2 minutes ago. The CDN hasn't cached it yet. How do you handle the thundering herd?"**
+
+The interviewer is testing whether you've thought about the cold-start problem for new content.
+
+> This is the cache stampede problem applied to video. Without mitigation, 10M requests hit the origin simultaneously, overwhelming it. Three defenses. First, proactive CDN warming: as soon as transcoding completes, the system pushes the first 30 seconds of each quality level to all CDN edge nodes before any user requests it. This is triggered by the transcoding completion event. For a viral video, this happens automatically — we don't know it'll go viral, but we warm all videos. Second, request coalescing at the CDN edge: when 1,000 requests arrive at the same edge node for an uncached segment simultaneously, the CDN makes one request to origin and holds the other 999 until it returns, then serves all 1,000 from the single fetched copy. This is standard CDN behavior (also called "request collapsing"). Third, origin rate limiting with a queue: if the CDN cache miss rate spikes, the origin returns a 503 with a Retry-After header, and the CDN retries with backoff. Users see a brief buffering spinner, not an error.
+
+---
+
+**Q2: "Your transcoding pipeline processes 500 hours of video per minute. A bug in your transcoding worker corrupts the audio track on all videos processed in the last 2 hours. How do you recover?"**
+
+The interviewer is testing your data recovery and pipeline design.
+
+> The raw video is always preserved in S3 — we never delete it after transcoding. Recovery steps: first, identify affected videos by querying the metadata DB for all videos with `transcoded_at` in the 2-hour window. Second, re-queue all affected video_ids to the transcoding pipeline with a "force retranscode" flag. Third, the workers fetch the raw video from S3, retranscode from scratch, overwrite the processed segments in S3, and update the metadata DB. Fourth, invalidate CDN cache for affected video segments — send a cache purge request to the CDN for all segment URLs of affected videos. The CDN will re-fetch from origin on next request. Total recovery time: depends on queue depth and worker capacity. With auto-scaling, spinning up 10× workers for the recovery batch is straightforward. The key design principle that makes this recoverable: raw video is immutable and permanent. Processed segments are derived artifacts that can always be regenerated.
+
+---
+
+**Q3: "YouTube recommends videos. A user watches a video about cooking. The next recommended video is about knives. The next is about weapons. How does your recommendation system prevent this 'rabbit hole' problem architecturally?"**
+
+The interviewer is testing whether you think about product safety as a system design concern.
+
+> This is a real problem YouTube has publicly struggled with — the recommendation system optimizes for watch time, and controversial content often has high watch time. Architecturally, there are three intervention points. First, content classification: every video is classified by a safety model at upload time. Videos in certain categories (extremist content, misinformation) are flagged and excluded from recommendations entirely. Second, diversity injection: the ranking model is modified to penalize consecutive recommendations in the same narrow topic cluster. After 3 cooking videos, the next recommendation is forced to be from a different cluster. This is a hard constraint in the ranking layer, not a soft signal. Third, watch-time discounting: the recommendation model is retrained to optimize for "satisfied watch time" (user rates the video positively or returns to YouTube) rather than raw watch time. Rage-bait and rabbit-hole content has high raw watch time but low satisfaction scores. The architectural point: safety constraints are applied as hard filters before the ranking model, not as soft signals within it. Hard filters can't be overridden by engagement signals.
+
+---
+
+**Q4: "You have 1.8 PB of new video per day. Your S3 costs are $50M/month. How do you reduce storage costs without deleting videos?"**
+
+The interviewer is testing cost optimization thinking.
+
+> Several approaches. First, tiered storage: move videos that haven't been watched in 90 days to S3 Glacier (10× cheaper than S3 Standard). The vast majority of YouTube's catalog is long-tail content with near-zero views. A background job scans for cold videos and migrates them. On a cache miss for a cold video, the CDN fetches from Glacier — first request takes 3-5 seconds (Glacier retrieval latency), subsequent requests are cached at the CDN edge. Second, codec migration: re-encode old H.264 videos to AV1, which achieves the same quality at 50% the bitrate. This halves storage for re-encoded videos. Run as a background job on the lowest-priority worker pool. Third, resolution pruning: for videos with < 100 views in 2 years, delete the 4K and 1080p versions and keep only 720p and below. Most viewers of obscure old videos are on mobile anyway. Fourth, deduplication: detect re-uploaded identical videos (hash-based) and store one copy with multiple metadata records pointing to it.
+
+---
+
+**Q5: "A creator uploads a 4K video. A viewer in rural India has a 500Kbps connection. Walk me through exactly what quality they get and how the ABR algorithm decides."**
+
+The interviewer is testing your depth on adaptive bitrate streaming.
+
+> The viewer's player downloads the master manifest, which lists all quality levels with their bandwidth requirements: 4K at 15Mbps, 1080p at 4Mbps, 720p at 2Mbps, 480p at 1Mbps, 360p at 500Kbps, 240p at 250Kbps. The player starts at the lowest quality (240p) to avoid initial buffering. It downloads the first 6-second segment at 240p. While playing that segment, it measures the download speed: 250Kbps actual throughput. The ABR algorithm (typically a variant of BOLA or MPC) calculates: available bandwidth 250Kbps, buffer level 6 seconds, next segment should be 240p (250Kbps fits within 250Kbps with no headroom). It stays at 240p. If the connection improves to 600Kbps, the algorithm sees headroom and steps up to 360p on the next segment. The step-up is conservative (one level at a time) to avoid oscillation. Step-down is aggressive (can jump multiple levels) to prevent rebuffering. The viewer in rural India gets 240p — not great, but uninterrupted playback. The key design: the player never requests a quality level whose bitrate exceeds 80% of measured throughput, leaving headroom for network jitter.

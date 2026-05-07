@@ -429,3 +429,47 @@ flowchart TD
 | Message Queue (Cassandra) | ~500 GB queue | ~5 TB queue | Add Cassandra nodes |
 | Message Routers | ~100 nodes | ~1,000 nodes | Horizontal (stateless) |
 | Media Store (S3) | Unlimited | Unlimited | No action |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "You said messages are deleted from the server after delivery. A user gets a new phone and restores from iCloud backup. Their chat history is on the device. But what about messages sent to them while they were setting up the new phone — those were delivered to the old device and deleted from the server. Are they lost?"**
+
+The interviewer is testing whether you've thought through the edge cases of the delete-after-delivery model.
+
+> Yes, those messages are lost — and that's an intentional design decision, not a bug. WhatsApp's model is device-centric: the device is the source of truth for history. Messages delivered to the old device are gone from the server. The new device only receives messages sent after it registers. This is the trade-off WhatsApp made for privacy and simplicity. The mitigation: WhatsApp offers optional encrypted cloud backup (iCloud/Google Drive) where the device periodically backs up the local message database. The backup is encrypted with a key only the user holds — WhatsApp can't read it. On new device setup, the user restores from backup and gets their history back. This is opt-in, not automatic, which is why some users lose messages. If the interviewer pushes for a better solution: a server-side encrypted history store (like Signal's sealed sender) would work but adds significant complexity and changes the privacy model.
+
+---
+
+**Q2: "Your Connection Registry in Redis maps user_id to gateway node. What happens if Redis goes down? Can users still send and receive messages?"**
+
+The interviewer is testing your single point of failure analysis.
+
+> If Redis goes down, new message routing fails — the Message Router can't look up which gateway node a recipient is on. But existing connections are unaffected — the gateway nodes still have their in-memory session maps. Messages between users on the same gateway node still work (in-process routing doesn't need Redis). Cross-node messages fail. The fix: Redis Sentinel or Redis Cluster for high availability — 3 nodes, automatic failover in ~30 seconds. For the 30-second window: the Message Router falls back to broadcasting the message to all gateway nodes ("scatter") — each node checks its local session map and delivers if the user is connected there. This is expensive (N gateway nodes receive every message) but it's a fallback for a rare failure. Alternatively, cache the routing table locally on each Message Router with a 5-second TTL — a Redis outage means stale routing for 5 seconds, not complete failure.
+
+---
+
+**Q3: "A WhatsApp group has 256 members. 200 of them are online. You fan-out the message to 200 gateway nodes. But 50 of those users are on the same gateway node. Are you making 200 separate calls or 50?"**
+
+The interviewer is testing whether you've optimized the fan-out path.
+
+> Great question — naive fan-out makes 200 separate calls, one per recipient. Optimized fan-out groups recipients by gateway node first, then makes one call per node with a batch of user_ids. So if 50 users are on Node A, 80 on Node B, and 70 on Node C, we make 3 calls instead of 200. Each call carries a list of user_ids and the message payload. The gateway node delivers to all listed users from its local session map in a single pass. This reduces fan-out from O(members) calls to O(gateway_nodes) calls — typically 3-10 calls instead of 200. The Message Router maintains a reverse index: gateway_node → [user_ids on that node] built from the Connection Registry. This index is rebuilt on every routing lookup and cached for 1 second.
+
+---
+
+**Q4: "End-to-end encryption means the server can't read messages. But WhatsApp has to comply with law enforcement requests. How does that work architecturally?"**
+
+The interviewer is testing whether you understand the real-world implications of your security design.
+
+> This is the fundamental tension in E2E encryption. WhatsApp genuinely cannot provide message content to law enforcement — the server stores ciphertext it cannot decrypt. What WhatsApp can provide: metadata. Who messaged whom, when, how frequently, group membership, IP addresses, device identifiers. This metadata is stored in plaintext on the server and is legally accessible. The architecture doesn't change — E2E encryption is real and the server truly can't read messages. The metadata logging is a separate system that records communication patterns without content. This is why privacy advocates distinguish between "content privacy" (E2E encryption provides this) and "metadata privacy" (WhatsApp does not provide this). Signal goes further by minimizing metadata collection — they can provide almost nothing to law enforcement because they don't store it.
+
+---
+
+**Q5: "Your system handles 1M messages/s. You need to add a spam detection feature that scans message content before delivery. How do you do this without breaking E2E encryption and without adding more than 50ms latency?"**
+
+The interviewer is testing whether you can add a feature that appears to conflict with your architecture.
+
+> This is a genuine conflict — you can't scan encrypted content server-side. There are three approaches. First, client-side scanning: run the spam model on the device before encrypting. The client checks the message against a local model (downloaded periodically) and either blocks it or adds a spam score to the message metadata. This preserves E2E encryption but is bypassable by modified clients. Second, hash-based matching: maintain a database of known-bad message hashes. The client computes a hash of the plaintext before encrypting and sends it alongside the ciphertext. The server checks the hash against the blocklist. This only catches known spam, not novel content. Third, metadata signals: detect spam from behavioral patterns — sending rate, new account age, group membership patterns — without reading content. This is what WhatsApp actually does. The 50ms constraint rules out any server-side ML inference on the message path — that would require decryption, which breaks E2E. The honest answer: you can't do content-based spam detection with true E2E encryption. You choose one or the other.

@@ -219,3 +219,37 @@ Dropbox historically used long polling (simpler, works through corporate firewal
 | Metadata DB hot partition (power user with 1M files) | Shard by (user_id, folder_id); limit folder size |
 | S3 eventual consistency on overwrite | Use versioned S3 keys; never overwrite a chunk (content-addressed = immutable) |
 | Sync storm on reconnect (many devices offline) | Stagger sync on reconnect; prioritize recently modified files |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "You use SHA-256 hashes as chunk identifiers for deduplication. Two different files could theoretically have the same SHA-256 hash (collision). What happens?"**
+
+> SHA-256 collisions are theoretically possible but practically impossible — the probability is 1 in 2^256, which is less than the probability of a cosmic ray flipping a bit in your RAM. No SHA-256 collision has ever been found in practice. However, if we're being rigorous: a collision would cause one user's chunk to be served to another user — a data corruption and privacy violation. The defense: we don't rely solely on the hash. When a chunk is uploaded, we verify it by re-hashing the stored content and comparing. If there's ever a mismatch (which would indicate either a collision or a storage corruption), we store both chunks under different keys and log an alert. In practice, the real threat isn't hash collisions — it's storage corruption (bit rot). We use checksums at the storage layer (S3 provides MD5 verification on upload) and periodic integrity scans. The SHA-256 is for deduplication efficiency; the storage layer's own checksums handle corruption detection.
+
+---
+
+**Q2: "A user shares a folder with 1,000 collaborators. They upload a 1GB file. How many times is the file stored in S3?"**
+
+> Once. This is the core value of content-addressed storage. The 1GB file is split into ~250 chunks of 4MB each. Each chunk is stored once in S3, keyed by its SHA-256 hash. The 1,000 collaborators each have a metadata record pointing to the same chunk hashes — they don't get their own copies. When any collaborator downloads the file, they fetch the same chunks from S3 (via CDN). The metadata records are cheap (a few KB per user per file). The storage cost is 1GB, not 1TB. The only time we'd store multiple copies is if the file is modified — the modified chunks get new hashes and are stored as new objects. Unchanged chunks continue to point to the existing objects. This is why Dropbox's storage efficiency is so high — a 1GB file shared with 1,000 people costs 1GB of storage, not 1TB.
+
+---
+
+**Q3: "Device A and Device B both edit the same file while offline. Device A changes line 5. Device B changes line 10. When they sync, can these be auto-merged?"**
+
+> In theory yes — they edited different parts of the file. In practice, Dropbox doesn't auto-merge. Here's why: Dropbox is a general-purpose file sync service. It doesn't know the file format. Line 5 and line 10 are meaningful for a text file, but for a binary file (Word document, Photoshop file), "line 5" is meaningless. Auto-merging binary files would corrupt them. The safe approach: detect the conflict (both devices modified the same file from the same base version), keep both versions, and let the user decide. Dropbox creates a "conflicted copy" file. For text files, the user can use a diff tool to merge manually. For binary files, they pick one version. The exception: Google Docs and Figma do auto-merge because they control the file format and have CRDT/OT engines built for it. Dropbox's design choice — be format-agnostic and safe — means no auto-merge. This is the right trade-off for a general-purpose sync tool.
+
+---
+
+**Q4: "A user accidentally deletes their entire Dropbox folder — 500GB of files. They realize 3 days later. How do you restore this?"**
+
+> Dropbox retains deleted files for 30 days (180 days for Business plans). The deletion is a soft delete — files are marked `is_deleted: true` in the metadata DB but the chunks in S3 are not deleted. The S3 lifecycle policy only deletes chunks when their reference count drops to zero AND the soft-delete TTL has expired. Recovery: the user goes to the Dropbox website, navigates to "Deleted Files," selects all files deleted in the last 3 days, and clicks "Restore." The Metadata Service sets `is_deleted: false` for all selected files and updates `updated_at`. The sync daemon on all devices detects the metadata change and re-downloads the files. The chunks are still in S3 — nothing was actually deleted. The restoration is fast (metadata update only) — the files reappear on the website immediately. Re-syncing to devices takes time proportional to the total file size and the device's bandwidth. The 500GB restoration to a device might take hours, but the files are immediately accessible via the web interface.
+
+---
+
+**Q5: "Dropbox has 700M registered users but only 15M paying. The free tier gives 2GB. How do you prevent free users from abusing storage with deduplication — e.g., a free user uploads a file that's already stored by a paid user, effectively getting free storage?"**
+
+> Deduplication is transparent to the user's quota. Each user has a quota counter that tracks their logical storage usage — the sum of file sizes they've uploaded, regardless of whether those chunks are deduplicated. If a free user uploads a 1GB file that's already stored by another user, their quota counter increases by 1GB. They've "used" 1GB of their 2GB quota. The fact that we didn't actually store a new 1GB in S3 is an internal optimization — the user doesn't benefit from it in terms of quota. The quota is based on logical ownership, not physical storage. This is the correct model: the user owns the file and is responsible for its size against their quota. The deduplication savings accrue to Dropbox's infrastructure costs, not to the user's quota. The implementation: the Metadata Service maintains a `quota_used` counter per user, incremented on every file upload by the file's logical size, decremented on deletion. The S3 physical storage is separate from this accounting.

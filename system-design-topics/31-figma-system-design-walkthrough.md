@@ -536,3 +536,49 @@ Once you commit to Yjs as the CRDT engine, the rest of the architecture follows 
 - Recovery is deterministic → snapshot + Kafka replay = exact state reconstruction
 
 The hardest operational challenge is the Collaboration Node: it's stateful, it owns live CRDT state, and it must handle graceful handoff during scaling and failure. Everything else (auth, metadata API, asset storage) is conventional web service design.
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+> These are the questions a senior interviewer asks after you finish the happy path. Read the question, think about your answer, then read the model response.
+
+---
+
+**Q1: "You said you'd use Yjs as the CRDT engine. What happens if two users concurrently delete and modify the same layer — one deletes it, the other moves it. What does the final state look like?"**
+
+The interviewer is testing whether you understand CRDT semantics beyond "it merges automatically."
+
+> The delete wins. In Yjs, a delete operation sets a tombstone on the layer — the layer is marked `deleted: true` but the entry remains in the Y.Map. The move operation targets a layer_id that now has `deleted: true`. The CRDT applies both operations, but the client rendering layer filters out tombstoned layers before drawing. The user who moved it sees their move "disappear" — the layer is gone. We should send them an error message: "The layer you were editing was deleted by another user." This is the correct behavior per Requirement 8.3 — delete wins, modification is discarded.
+
+---
+
+**Q2: "Your consistent hashing routes all sessions for a document to one Collaboration Node. What happens during a rolling deployment — you're updating the node software. How do you avoid dropping active sessions?"**
+
+The interviewer is testing operational thinking — deployments are a real failure mode.
+
+> Rolling deployments are the hardest part of stateful services. The approach: before terminating a node, mark it as "draining" in the Redis hash ring — the gateway stops routing new documents to it but existing sessions stay. We wait for a configurable drain window (say 60 seconds) for users to naturally disconnect. For sessions still active after the drain window, we force-close them — clients auto-reconnect via WebSocket reconnect logic, get routed to a new node, and that node rehydrates from S3 + Kafka. The user sees a brief "reconnecting" indicator. The key insight: we never kill a node without draining first. This is the same pattern as Kubernetes graceful termination with a `preStop` hook.
+
+---
+
+**Q3: "You're storing Yjs snapshots in S3. A document has 50,000 layers after 2 years of editing. The snapshot is 200MB. Rehydration takes 45 seconds. How do you fix this?"**
+
+The interviewer is testing whether you can identify and solve a concrete performance problem.
+
+> Three approaches, applied in order of complexity. First, incremental snapshots — instead of one full snapshot, store a base snapshot plus delta snapshots every 100 ops. Rehydration loads the base and applies only the recent deltas. Second, lazy rehydration — mark the node as "warming up," accept new connections but queue their operations until rehydration completes. Users see a loading state for a few seconds rather than a connection refusal. Third, snapshot compression — Yjs binary format compresses well with zstd; a 200MB snapshot typically compresses to 20-40MB, cutting S3 fetch time by 5-10×. In practice, combining compression with incremental snapshots gets rehydration under 5 seconds for most documents.
+
+---
+
+**Q4: "Your presence service broadcasts cursor positions at 30/s per user. With 100 users in a room that's 3,000 messages/second just for presence. How does this not overwhelm the Collaboration Node?"**
+
+The interviewer is testing whether you've thought about the hot path carefully.
+
+> Three layers of throttling. Client-side: cursor moves are throttled to 30/s before sending — mousemove fires at 60fps but we only send every 33ms. Server-side: the Collaboration Node drops presence messages that arrive faster than 30/s per client, silently. Fan-out: presence is in-process fan-out — no serialization to Kafka, no DB write, just iterating the sessions map and writing to each WebSocket. At 100 sessions, that's 100 WebSocket writes per presence message. Each write is ~100 bytes. 3,000 messages/s × 100 bytes = 300KB/s per session — well within a 1Gbps NIC. The node handles this in goroutines, one per session, so slow clients don't block fast ones. The real limit is the number of goroutines, not bandwidth.
+
+---
+
+**Q5: "A user reports their changes aren't showing up for their collaborators. How do you debug this in production?"**
+
+The interviewer is testing operational maturity — can you actually run this system.
+
+> I'd work through the pipeline in order. First, check if the client is sending the delta — look at WebSocket frame logs on the client side. If the frame is sent, check if the Collaboration Node received it — look for the op_id in the node's structured logs. If received, check if Kafka produced successfully — look for the Kafka producer ack log. If Kafka acked, check if the broadcast happened — look for fan-out log entries for the room. If broadcast happened, check if the recipient's WebSocket received it — look at the recipient's client logs. This is a linear pipeline so the bug is at exactly one stage. The most common cause in practice: the recipient's WebSocket is in a half-open state — the TCP connection appears alive but packets aren't flowing. The fix: WebSocket ping/pong keepalive detects this within 30 seconds and triggers a reconnect.

@@ -216,3 +216,37 @@ flowchart LR
 | Recommendation staleness | Run model daily for active users, weekly for inactive; real-time "recently played" signals applied as lightweight re-ranking |
 | Search at 35K queries/s | Elasticsearch cluster with read replicas; cache popular queries in Redis (TTL 60s) |
 | Playlist fan-out (collaborative playlists) | Collaborative playlists are rare; handle as special case with optimistic locking |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "A user is listening to a song. Halfway through, they lose internet connection. What happens? Does the song stop?"**
+
+> No — the player buffers ahead. The Spotify client pre-fetches the next 30 seconds of audio while playing the current 30 seconds. When the connection drops, the player continues from the buffer. If the buffer runs out before the connection restores, playback pauses and shows a buffering indicator. The buffer size is adaptive: on a fast connection, buffer 60 seconds ahead; on a slow connection, buffer 15 seconds (less data to fetch, faster to fill). For Premium users with offline downloads, the entire track is on-device — no buffering needed. The architectural implication: the streaming service doesn't need to maintain a persistent connection per listener. Each segment request is independent HTTP. The client manages the buffer and makes requests proactively. This is why Spotify uses HTTP-based streaming (not a persistent WebSocket) — stateless, CDN-friendly, and resilient to connection drops.
+
+---
+
+**Q2: "Spotify's Discover Weekly drops every Monday. 400 million users get a new playlist simultaneously. How does the system handle this without falling over?"**
+
+> This is a thundering herd problem at the recommendation layer. The mitigation is staggered generation and pre-computation. The ML pipeline runs throughout the week, not just on Sunday night. By Monday morning, all 400M playlists are pre-computed and stored in the recommendation cache (Redis/Cassandra). When users open the app on Monday, they're reading from cache — no ML inference at request time. The "simultaneous" part is a myth: users open the app throughout Monday across all time zones. The actual spike is spread over 24 hours. For the genuine spike (Monday 9am in each time zone), the recommendation cache is read-only and horizontally scalable — add more Redis replicas. The playlist metadata (track list) is stored in Postgres, also read-only at serve time. The CDN handles audio delivery. The only write spike is the playlist generation job itself — but that's a background batch job that runs over 48 hours, not a user-facing request.
+
+---
+
+**Q3: "You said Spotify uses signed URLs for DRM. The signed URL expires in 1 hour. A user is listening to a 3-hour audiobook. What happens when the URL expires mid-playback?"**
+
+> The client handles URL refresh transparently. The Spotify client tracks the expiry time of the current stream URL. When it's within 5 minutes of expiry, the client silently requests a new signed URL from the Stream Service in the background — before the current URL expires. The new URL is swapped in for the next segment request. The user never notices. This is the same pattern as JWT refresh tokens — proactive refresh before expiry, not reactive refresh after failure. The edge case: the client is offline when the URL expires (e.g., phone in airplane mode). In this case, the cached segments already downloaded continue playing. When the client needs a new segment and the URL is expired, it waits for connectivity, refreshes the URL, and continues. For offline downloads, there's no URL — the file is on-device with device-level DRM, so expiry doesn't apply.
+
+---
+
+**Q4: "Two users have identical listening histories. Should they get identical recommendations? What are the implications if yes?"**
+
+> They should get similar but not identical recommendations. If they're identical, we've created a filter bubble — both users only discover the same content, and new artists can never break through to different audience segments. The recommendation system intentionally injects diversity: a small percentage of recommendations (10-15%) are "exploration" slots — tracks outside the user's established taste profile, chosen to expand their musical range. These exploration slots are randomized per user, so two users with identical histories get different exploration tracks. The architectural implication: the recommendation model output is not deterministic. We add a controlled randomness layer after ranking — the top-N candidates are ranked by the model, but the final playlist is sampled from the top-N with some probability weighting rather than always taking the top-20. This also prevents the system from being gamed — if recommendations were fully deterministic, labels could reverse-engineer the algorithm and optimize for it.
+
+---
+
+**Q5: "Spotify pays royalties based on play counts. A play is counted after 30 seconds of listening. How do you ensure this count is accurate and can't be gamed by bots?"**
+
+> Play count accuracy has two parts: correctness and fraud detection. For correctness: the client sends a "play event" after 30 seconds of actual audio playback (not just 30 seconds elapsed — we track actual audio position). The event includes track_id, user_id, device_id, timestamp, and a session token. The event goes to a stream processing pipeline (Kafka → Flink) that deduplicates by (user_id, track_id, session_id) within a 24-hour window — the same session can't count twice. For fraud detection: bot streams have detectable patterns — same user_id playing the same track on loop, thousands of plays from one IP, new accounts with no listening history suddenly generating millions of plays. We run anomaly detection on the play event stream: flag accounts with play velocity > 3 standard deviations from their historical average, flag IP addresses generating > 1000 plays/hour, flag tracks with sudden play spikes from accounts with no prior activity. Flagged plays are quarantined and reviewed before being counted for royalties. The royalty calculation runs on the verified play count, not the raw event count.

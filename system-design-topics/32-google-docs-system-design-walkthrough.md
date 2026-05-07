@@ -570,3 +570,47 @@ This is worth having in your head for interviews. The same problem (real-time co
 
 **"How does revision history work?"**
 > Every op is stored in Bigtable with a (doc_id, revision) key. To restore to revision N, fetch the nearest snapshot before N and replay ops from that snapshot to N. Beyond 30 days, we compact to hourly snapshots to control storage costs.
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "You said OT requires a central server to serialize operations. What happens if that OT Server is partitioned from the database for 10 seconds — it can't write ops to Bigtable. Do you keep accepting edits or reject them?"**
+
+The interviewer is testing your understanding of the CAP theorem applied to a real scenario.
+
+> This is a CP vs AP choice. If we reject edits during the partition, users get a frozen document — bad UX but no data loss. If we keep accepting edits, we buffer them in the OT Server's local WAL and risk losing them if the server crashes before the partition heals. My choice: keep accepting edits, buffer in local WAL, and show users a subtle "saving..." indicator instead of "saved." The reasoning: a 10-second partition is transient. Losing 10 seconds of work is far worse than a brief "saving" state. The local WAL on SSD survives a process crash — only a hardware failure loses data, which is rare. This is the same trade-off Google Docs makes — you've seen the "Saving..." indicator when your connection drops.
+
+---
+
+**Q2: "Two users are both offline for 2 hours editing the same paragraph. When they reconnect, how does OT handle merging 2 hours of diverged edits?"**
+
+The interviewer is testing whether you understand OT's fundamental limitation with long offline periods.
+
+> This is where OT gets painful. The reconnecting client must transform its entire 2-hour op buffer against all server ops since it went offline. If the server has 10,000 ops and the client has 500 ops, that's potentially 500 × 10,000 = 5M transformation operations. In practice, most ops don't overlap so the transformation is cheap, but worst-case it's expensive. The real problem is correctness — OT transformation functions for rich text (nested formatting, tables) are notoriously hard to get right for long divergence periods. This is why Google Docs limits offline editing and shows a warning after extended disconnection. For our system, I'd cap the offline buffer at 30 minutes of ops. Beyond that, on reconnect we fetch the server's current state, show the user a diff of what changed, and ask them to manually reconcile. It's a worse UX than CRDT (which handles this automatically) but it's honest about OT's limitations.
+
+---
+
+**Q3: "Your OT Server holds the in-memory document state. It's using 32GB of RAM for a large document. A memory leak causes it to OOM and crash. Walk me through exactly what happens to the 47 users currently editing."**
+
+The interviewer is testing failure recovery in detail.
+
+> The sequence: OT Server process dies → OS closes all TCP connections → 47 WebSocket connections drop simultaneously → all 47 clients get a disconnect event and start reconnecting with exponential backoff (1s, 2s, 4s...). Meanwhile: the gateway detects the missing heartbeat within 5 seconds → removes the node from the routing table → the consistent hash ring reassigns the document to the next node. The new node starts rehydrating: fetches the latest snapshot from GCS, replays Bigtable ops since the snapshot. This takes 3-8 seconds for a typical document. Clients are retrying — the first few retries hit "node not ready" and get a 503, which triggers another backoff. Once the new node marks itself ready, the next retry succeeds. Each client sends `since_seq: N` on rejoin — the node sends any ops since N. Total user-visible disruption: 10-20 seconds of "reconnecting." Ops that were in the OT Server's local WAL but not yet flushed to Bigtable: the client retransmits them on reconnect (they were never acked). No data loss.
+
+---
+
+**Q4: "How do you handle a user who types 200 characters per minute in a shared document with 50 other active editors? What's the worst-case latency for their keystrokes to appear on everyone else's screen?"**
+
+The interviewer is testing end-to-end latency reasoning.
+
+> Let's trace the path. User types a character → client sends op to OT Server (network: ~5ms same region). OT Server receives op → transforms against any concurrent ops (CPU: ~1ms) → writes to local WAL (SSD: ~0.1ms) → acks to client → broadcasts to 50 sessions. The broadcast is the bottleneck: 50 WebSocket writes in parallel goroutines. Each write is ~200 bytes. At 1Gbps NIC, 50 × 200B = 10KB — negligible. The goroutine scheduling overhead is ~0.1ms per write. So broadcast completes in ~1-2ms. Total: ~8ms from keystroke to appearing on all 50 screens in the same region. Cross-region adds ~100ms for the network hop. The 200 chars/min rate is ~3 chars/second — the OT Server handles this trivially. The real stress test is 50 users all typing simultaneously: 50 × 3 = 150 ops/s, each requiring transformation against the others. Still well within the OT Server's capacity (~10K ops/s).
+
+---
+
+**Q5: "Your search feature needs to find a message from 3 years ago. You said you compact to hourly snapshots beyond 30 days. How does search work on compacted data?"**
+
+The interviewer is testing whether your storage strategy is consistent with your feature requirements.
+
+> Good catch — this is a real tension. The op-log compaction affects storage, not the search index. Elasticsearch indexes every document when it's created and retains the index indefinitely (or until explicitly deleted). The compaction only affects the op-log in Bigtable — we delete individual ops and replace them with hourly snapshots. The search index in Elasticsearch is separate and unaffected. So searching for a 3-year-old message works fine — Elasticsearch has it indexed. The only thing we lose with compaction is the ability to replay individual ops from 3 years ago (for version history). We retain hourly snapshots for that. The search result returns the document content and a timestamp — if the user wants to restore to that exact point, we load the nearest hourly snapshot and replay forward. The key insight: search index and op-log are independent systems with independent retention policies.

@@ -243,3 +243,37 @@ Recording is handled by a special "participant" that subscribes to all streams f
 | TURN server bandwidth | TURN is last resort; minimize usage; TURN servers are bandwidth-heavy, scale separately |
 | Cross-region cascade latency | Minimize cascade hops; route participants to nearest server; accept slightly higher latency for cross-region meetings |
 | Packet loss | FEC (Forward Error Correction) adds redundancy; NACK (negative acknowledgment) requests retransmission for video; audio uses PLC (packet loss concealment) |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "You said Zoom uses UDP for audio/video. UDP has no delivery guarantee. A packet is lost. What happens to the audio — does the user hear a glitch?"**
+
+> It depends on the loss rate and the recovery mechanism. For audio, Zoom uses two techniques. First, FEC (Forward Error Correction): the sender adds redundant data to every N packets so that any single lost packet can be reconstructed from the others. For example, every 5th packet contains a XOR of the previous 4 — if packet 3 is lost, it can be reconstructed from packets 1, 2, 4, and the parity packet. This adds ~20% bandwidth overhead but eliminates audible glitches for single packet losses. Second, PLC (Packet Loss Concealment): if a packet is lost and can't be recovered via FEC (e.g., burst loss), the audio codec (Opus) generates a synthetic continuation of the audio based on the previous frames. For speech, this sounds like a very brief stutter — barely noticeable at < 5% loss. At > 10% loss, audio quality degrades noticeably. For video, lost packets cause visual artifacts (blocky frames) rather than freezes — the decoder renders what it has. The key insight: UDP + FEC + PLC gives better perceived quality than TCP for real-time audio, because TCP's retransmission adds 100-200ms of latency (waiting for the retransmit), which is far more disruptive than a brief audio glitch.
+
+---
+
+**Q2: "A 500-person all-hands meeting on Zoom. The CEO is presenting. 499 people are watching. How many video streams are being transmitted, and how does the SFU manage this?"**
+
+> The CEO sends 1 video stream (simulcast: 3 quality levels). The SFU receives these 3 streams. For the 499 viewers: each viewer receives 1 stream — the CEO's video at the quality level appropriate for their bandwidth. The SFU forwards the CEO's stream to all 499 viewers. Total streams: 3 sent by CEO + 499 received by viewers = 502 streams through the SFU. But the 499 viewers also each send their own video (even if their camera is off, they send a minimal stream for presence). So total: 500 streams into the SFU + 500 streams out = 1,000 streams. The SFU's bandwidth: 500 × 1Mbps in + 500 × 1Mbps out = 1Gbps. A single SFU server handles this easily (modern servers have 10Gbps NICs). The CPU load: the SFU doesn't decode/re-encode — it just forwards packets. CPU usage is minimal. The real constraint is the viewer's experience: each viewer receives only the CEO's stream (active speaker) plus small thumbnails of other participants. The SFU uses active speaker detection to decide which stream to prioritize for each viewer.
+
+---
+
+**Q3: "Zoom's end-to-end encryption feature means the server can't decrypt video. But Zoom also offers cloud recording. How can you record something you can't decrypt?"**
+
+> These two features are mutually exclusive — you can't have both simultaneously. When E2E encryption is enabled, cloud recording is disabled. The recording button is grayed out. This is an intentional design decision, not a limitation to be engineered around. When E2E encryption is off (the default for most meetings), the SFU can decrypt the streams (it holds the session keys) and the Recording Service subscribes to the SFU as a special participant, receives the decrypted streams, mixes them, and writes to S3. When E2E encryption is on, the SFU only sees encrypted packets it cannot decrypt. Recording is only possible locally — the meeting host's client decrypts the streams (it has the keys) and records locally. The architectural lesson: security and convenience are genuinely in tension. Zoom made the right call by being explicit about the trade-off rather than trying to engineer around it with a backdoor.
+
+---
+
+**Q4: "A participant's internet connection drops mid-meeting. They reconnect 30 seconds later. What did they miss, and how does the system handle their reconnection?"**
+
+> They missed 30 seconds of audio/video — this is unrecoverable for real-time streams. Unlike messaging (where you can replay missed messages), video frames are ephemeral. The SFU doesn't buffer video for reconnecting participants. On reconnection: the client re-establishes the WebSocket signaling connection, re-does the WebRTC handshake with the SFU (ICE, DTLS, SRTP), and starts receiving the live stream again. This takes 2-5 seconds. During this window, the participant sees a "reconnecting" spinner. The meeting continues without them — other participants see their video tile as frozen or blank. The participant's audio is muted automatically during reconnection to prevent noise. For the missed content: if cloud recording is enabled, the participant can watch the recording later. If not, they missed it. The host can also use the "recap" feature (if enabled) to summarize what was discussed. The key design point: real-time video is not a store-and-forward system. Reconnection means rejoining the live stream, not replaying the missed portion.
+
+---
+
+**Q5: "Zoom has a waiting room feature — the host must admit each participant. With 500 participants joining simultaneously (large webinar), how does the waiting room scale?"**
+
+> The waiting room is a state machine per participant, not a queue. Each participant who joins is in `WAITING` state, stored in Redis: `waiting_room:{meeting_id}` → set of `{participant_id, name, join_time}`. The host's client subscribes to this set and receives real-time updates as participants join. For 500 simultaneous joins: 500 writes to Redis (fast, sub-millisecond each), 500 notifications pushed to the host's client via WebSocket. The host's UI shows a list of 500 waiting participants. The host can "Admit All" (one click → 500 state transitions from WAITING to ADMITTED) or admit individually. The "Admit All" operation: the Signaling Service receives the command, updates all 500 participant states in Redis in a pipeline (batch operation), and sends 500 WebSocket messages to the waiting participants' clients. Each client receives "admitted" and initiates the WebRTC handshake. The 500 simultaneous WebRTC handshakes are the real bottleneck — each requires CPU for DTLS key exchange. The SFU handles this by queuing handshakes and processing them at ~100/second, so all 500 are admitted within 5 seconds.

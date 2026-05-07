@@ -253,3 +253,37 @@ Surge zones are computed every 60 seconds per city zone (geohash cell). Stored i
 | Trip DB write contention | Postgres with optimistic locking on trip state transitions; partition by city |
 | Driver goes offline mid-trip | Trip state in Postgres is durable; driver reconnects and fetches current state; rider sees "reconnecting" |
 | Payment failure at trip end | Retry with exponential backoff; trip stays in COMPLETED state until payment succeeds; separate payment retry queue |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "You store driver locations in Redis Geo. Redis is single-threaded. At 1.25M location writes/s, how does a single Redis instance handle this?"**
+
+> It doesn't — a single Redis instance handles ~100K ops/s. At 1.25M writes/s, we need at least 13 Redis instances. The sharding strategy: shard by geographic region (city or country). Drivers in New York write to the NYC Redis shard; drivers in London write to the London shard. This is natural partitioning — a rider in NYC only needs to query the NYC shard for nearby drivers. The Matching Service knows which shard to query based on the rider's location. Each city shard handles the drivers in that city — a large city like NYC might have 50K active drivers, which is well within one Redis instance's capacity. For very large cities, shard by geohash cell (sub-city regions). The key insight: location data has natural geographic locality — you never need to query drivers across cities simultaneously. Geographic sharding eliminates cross-shard queries entirely.
+
+---
+
+**Q2: "A driver accepts a trip, drives to the pickup, and the rider cancels just as the driver arrives. The driver is owed a cancellation fee. How does your system handle this payment edge case?"**
+
+> The trip state machine handles this. When the rider cancels, the Trip Service checks the current trip state: if state is `EN_ROUTE` or `ARRIVED`, a cancellation fee applies. The fee calculation: if the driver has been waiting at the pickup for > 2 minutes (state = `ARRIVED`, `arrived_at` timestamp > 2 minutes ago), charge the rider a cancellation fee. The Trip Service transitions the trip to `CANCELLED_WITH_FEE` state and publishes a payment event to the Payment Service. The Payment Service charges the rider's saved payment method for the cancellation fee and credits the driver's account. The idempotency key for this payment is the trip_id + "cancellation_fee" — if the payment request is retried (network failure), it won't double-charge. The driver sees the fee credited in their earnings dashboard within 5 minutes. The edge case: what if the rider's payment method fails? The fee goes to a "pending collection" state — Uber retries the charge over 7 days and can deactivate the rider's account if it remains unpaid.
+
+---
+
+**Q3: "Surge pricing multiplies fares by up to 3×. A rider requests a trip, sees 1.5× surge, confirms, and then the surge drops to 1.0× before the driver arrives. What price do they pay?"**
+
+> They pay the price they confirmed — 1.5×. This is a contract: the rider accepted the surge price at confirmation time. The Trip Service records the surge multiplier at the moment of trip creation: `surge_multiplier: 1.5`. The fare calculation at trip completion uses this stored multiplier, not the current surge. This is important for trust — if the price could change after confirmation, riders would never confirm during surge. The reverse case: surge increases after confirmation. The rider still pays the confirmed price (1.5×, not the new 2.0×). The surge multiplier is immutable once stored on the trip record. The only exception: if the trip is cancelled and re-requested, the new request gets the current surge price. This is why Uber shows a countdown timer on the surge confirmation screen — the price is locked for 60 seconds, after which you need to re-confirm.
+
+---
+
+**Q4: "Your matching algorithm offers the trip to one driver at a time with a 15-second timeout. In a busy city at rush hour, the top 5 drivers all decline. The rider has been waiting 75 seconds. How do you handle this?"**
+
+> After N consecutive declines, the matching algorithm widens the search radius and lowers the driver score threshold. Specifically: after 3 declines, expand the search radius from 5km to 8km. After 5 declines, expand to 12km and include drivers with lower acceptance rates. After 7 declines, notify the rider that wait times are longer than usual and offer to cancel without penalty. Simultaneously, the system flags this as a supply shortage event for the surge pricing engine — if many riders are experiencing long wait times in a zone, surge price increases to attract more drivers. The driver decline tracking: we record why drivers decline (no reason given, but we infer from behavior — a driver who declines 5 trips in a row is probably heading home). Drivers with high decline rates in a zone are deprioritized for future offers in that zone. The 15-second timeout is also adaptive: during surge, we reduce it to 10 seconds to cycle through drivers faster.
+
+---
+
+**Q5: "Uber operates in 70 countries with different regulations. In some countries, drivers must be licensed taxis. In others, anyone can drive. How does your system handle this regulatory complexity without becoming a mess of if-statements?"**
+
+> Regulatory rules are data, not code. We have a Rules Engine service that stores per-country, per-city regulatory requirements as configuration: `{country: "UK", city: "London", driver_license_type: "PCO", vehicle_inspection: "annual", surge_cap: 2.5x}`. When a driver registers, the onboarding flow queries the Rules Engine for their location and enforces the appropriate requirements. When a rider requests a trip, the Matching Service queries the Rules Engine to filter the driver pool — in London, only PCO-licensed drivers are eligible. When surge pricing is calculated, the Rules Engine caps it at the local maximum (some cities have surge caps). The Rules Engine is a separate service with its own database — adding a new country's regulations is a data change, not a code deployment. The if-statements exist in the Rules Engine's evaluation logic, not scattered across every service. New regulations are added by the compliance team via a configuration UI, not by engineers. This is the "policy as data" pattern — it's how you scale regulatory complexity without scaling engineering complexity.

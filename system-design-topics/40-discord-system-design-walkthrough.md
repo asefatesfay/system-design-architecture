@@ -228,3 +228,37 @@ Presence is stored in Redis with a TTL. If a client disconnects without sending 
 | Message history reads (load 50 messages) | Cassandra partition scan is fast; hot channels cached in Redis |
 | Presence at 19M concurrent users | Redis cluster; presence updates batched; eventual consistency (1-2s lag is fine) |
 | Attachment storage | S3 + CDN; virus scanning before serving; per-user upload quota |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "Discord has servers with 500K members. When someone posts in #general, you said you fan-out to online members only. How do you know which of the 500K members are online without querying all 500K presence records?"**
+
+> We don't query all 500K presence records on every message. Instead, we maintain a channel subscription model. When a user opens a channel (scrolls to it, has it visible on screen), their client sends a `CHANNEL_SUBSCRIBE` event to the Gateway. The Gateway registers this subscription in Redis: `channel_subscribers:{channel_id}` → set of gateway_node_ids that have at least one subscriber. When a message arrives, the Fan-out Service queries this set — it gets back a list of 10-50 gateway nodes that have active subscribers, not 500K user records. Each gateway node then delivers to its local subscribers. For very large servers, Discord uses a "lazy subscription" model — you only receive messages for channels you're actively viewing, not all channels in the server. This reduces fan-out from O(online_members) to O(active_viewers), which is typically 1-5% of online members for any given channel.
+
+---
+
+**Q2: "You store messages permanently in ScyllaDB. A user sends a message with a typo, edits it 5 seconds later. How do you handle message edits — do you overwrite the original or store both versions?"**
+
+> We store both versions — the original and the edit. The message record has an `edited_at` timestamp and an `edit_history` array. The current content is the latest edit. The original is preserved for moderation purposes — server admins can see edit history. The ScyllaDB schema: the message row is updated in-place (UPDATE statement) with the new content and `edited_at` timestamp. The edit history is stored as a separate `message_edits` table: `(channel_id, message_id, edited_at, previous_content)`. This keeps the hot path fast — reading a message is a single row lookup, not a join. Edit history is only fetched when explicitly requested (right-click → "View Edit History"). The fan-out for edits: the Gateway broadcasts a `MESSAGE_UPDATE` event to all online channel subscribers with the new content and `edited_at`. Clients update their local message cache. The edit is eventually consistent — a user who's offline when the edit happens will see the edited version when they reconnect (they fetch the current message state, not the history).
+
+---
+
+**Q3: "Discord's voice channels use WebRTC with an SFU. A user joins a voice channel with 50 other people. How many audio streams is their client sending and receiving?"**
+
+> Sending: exactly 1 stream — their own microphone audio, encoded with Opus at 32Kbps. Receiving: up to 50 streams in theory, but in practice far fewer. The SFU uses voice activity detection (VAD) to identify who is speaking. At any moment, typically 1-3 people are speaking simultaneously. The SFU only forwards streams from active speakers to each client — silent participants' streams are suppressed. So the client receives 1-3 streams at any given time, not 50. For the gallery view (showing all participants), the SFU sends low-bitrate video thumbnails for all participants but full-quality audio only for active speakers. The client's bandwidth: 1 stream sent (32Kbps) + 3 streams received (3 × 32Kbps = 96Kbps) = ~128Kbps total. This is why Discord voice works on mobile data — it's extremely bandwidth-efficient. The SFU's job is to make intelligent forwarding decisions so clients don't have to receive 50 streams.
+
+---
+
+**Q4: "Discord has a 'Nitro' subscription that gives users higher upload limits and better video quality. How do you enforce these limits without checking the subscription on every message?"**
+
+> Subscription status is cached at the Gateway layer. When a user connects, the Gateway fetches their subscription tier from the User Service and caches it in memory for the duration of the session. All limit checks (file size, video bitrate, emoji usage) are enforced at the Gateway using this cached value — no database call per message. The cache is invalidated when: the subscription expires (Gateway receives a `subscription_changed` event via Kafka), the user upgrades (same event), or the session ends. The Kafka event is published by the Subscription Service when any subscription change occurs. The Gateway subscribes to this topic and updates its in-memory cache. The race condition: a user's Nitro expires at exactly the moment they're uploading a large file. The Gateway's cached value says "Nitro" but the subscription has expired. We accept this — the file upload succeeds. The next session will have the correct (non-Nitro) limits. This is an intentional trade-off: the cost of occasionally allowing one over-limit upload is far less than the cost of a database call on every upload.
+
+---
+
+**Q5: "Discord stores message history permanently. After 10 years, you have petabytes of messages. Most of them are never read again. How do you manage storage costs?"**
+
+> Tiered storage based on access recency. Hot tier (ScyllaDB, in-memory): messages from the last 30 days. These are frequently accessed — users scroll back through recent history. Warm tier (ScyllaDB, SSD): messages from 30 days to 2 years. Accessed occasionally — someone searches for a message from last year. Cold tier (S3 Glacier): messages older than 2 years. Rarely accessed — only when someone specifically searches for old content. The migration: a background job runs nightly and moves messages older than 30 days from hot to warm, and older than 2 years from warm to cold. The read path: the Message Service checks hot tier first, then warm, then cold (with a 3-5 second retrieval delay for Glacier). For search, Elasticsearch indexes all messages regardless of tier — the search result returns a message_id, and the Message Service fetches the content from whichever tier it's in. The cost reduction: S3 Glacier is ~$0.004/GB/month vs ScyllaDB's ~$0.10/GB/month — 25× cheaper for cold data. Given that 90% of messages are never read after 30 days, this reduces storage costs by ~60%.

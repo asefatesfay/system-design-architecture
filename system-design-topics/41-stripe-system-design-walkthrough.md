@@ -255,3 +255,37 @@ Webhooks are at-least-once — a merchant might receive the same event twice (if
 | Webhook delivery failures | Exponential backoff; dead letter queue; merchant dashboard for manual retry |
 | Ledger query performance | Partition ledger by account_id + time; materialized views for balance queries |
 | Fraud model latency | Pre-compute risk features; model inference < 50ms; fallback to rule-based if ML is slow |
+
+---
+
+## Interviewer Mode — Hard Follow-Up Questions
+
+---
+
+**Q1: "A merchant's server sends a charge request. Your API returns 200 OK. Then your database write fails. The merchant thinks the charge succeeded. What happens?"**
+
+> This is the classic distributed systems problem: the response was sent before the write was confirmed. In Stripe's architecture, this cannot happen — the database write is synchronous and happens before the 200 response is sent. The sequence is: receive request → check idempotency → validate → charge card network → write to DB → return 200. If the DB write fails, we return a 500 to the merchant. The merchant retries with the same idempotency key. On retry, we attempt the charge again. If the card was already charged (the card network call succeeded but our DB write failed), we detect this via the card network's authorization code — we can query the network to check if auth code "ABC123" was already captured. If yes, we record the charge in our DB and return success. If no, we attempt a fresh charge. The idempotency key ensures the merchant's retry is safe. The key design principle: never return 200 until the data is durable. Latency is a secondary concern to correctness.
+
+---
+
+**Q2: "Stripe processes $1T per year. A rogue engineer could theoretically insert a fraudulent ledger entry and steal money. How does your architecture prevent this?"**
+
+> The ledger is append-only and cryptographically signed. Every ledger entry includes a hash of the previous entry — it's a blockchain-like structure (though not a public blockchain). Inserting a fraudulent entry in the middle would break the hash chain, which is detectable. Additionally: all ledger writes go through a dedicated Ledger Service with strict access controls — no direct database access for engineers. Every write is logged with the engineer's identity and requires a second approval for amounts above a threshold. The ledger is replicated to an immutable audit store (write-once S3 bucket with object lock) — even database admins can't delete entries. Reconciliation runs hourly: the sum of all debit entries must equal the sum of all credit entries (double-entry invariant). Any discrepancy triggers an immediate alert. The practical answer: no single engineer can steal money because the ledger requires two parties (debit + credit) and the reconciliation would catch any imbalance within an hour.
+
+---
+
+**Q3: "A merchant integrates Stripe and accidentally charges a customer $10,000 instead of $10. The customer calls their bank and disputes the charge. Walk me through the chargeback process architecturally."**
+
+> A chargeback is initiated by the card network (Visa/Mastercard) on behalf of the customer's bank. The sequence: customer disputes → their bank files a chargeback with the card network → card network notifies Stripe → Stripe's Dispute Service receives the chargeback notification via webhook from the card network. The Dispute Service: creates a dispute record in the DB, freezes the merchant's payout for the disputed amount, notifies the merchant via webhook (`charge.dispute.created`), and gives the merchant 7 days to submit evidence. The merchant submits evidence (order confirmation, shipping receipt) via the Stripe Dashboard or API. Stripe forwards the evidence to the card network. The card network rules within 60-75 days. If the merchant wins: the frozen funds are released. If the customer wins: the funds are returned to the customer and the merchant is charged a $15 dispute fee. The architectural point: chargebacks are an external process driven by the card network. Stripe is a participant, not the arbiter. The Dispute Service is essentially a state machine tracking the chargeback lifecycle.
+
+---
+
+**Q4: "Your webhook delivery retries for 72 hours. A merchant's endpoint is down for 3 days. They miss 10,000 webhook events. How do they recover?"**
+
+> After 72 hours, events go to the dead letter queue and the merchant's webhook endpoint is marked as "failing." Stripe sends an email alert to the merchant's registered email. Recovery options: First, the Stripe Dashboard shows all failed webhook events with their payloads — the merchant can manually replay any event by clicking "Resend." Second, the Stripe API has an `events` endpoint: `GET /events?type=charge.succeeded&created[gte]=1234567890` — the merchant can query all events in the missed window and process them. Third, for critical events (payment succeeded/failed), the merchant should also poll the Stripe API as a fallback — webhooks are best-effort, the API is the source of truth. The architectural lesson: webhooks are a convenience, not a guarantee. Any system that depends on webhooks for correctness (not just notification) is incorrectly designed. The merchant's system should be able to reconcile its state against the Stripe API at any time, independent of webhook delivery.
+
+---
+
+**Q5: "Stripe operates in 46 countries with different currencies. A merchant in Japan charges a customer in the US $100. The exchange rate changes between authorization and capture (2 days later). Who bears the currency risk?"**
+
+> This is a business decision with architectural implications. Stripe's model: the exchange rate is locked at authorization time. When the merchant authorizes $100 USD, Stripe converts to JPY at the current rate and holds that JPY amount. When the merchant captures 2 days later, they receive the JPY amount locked at authorization — regardless of what the USD/JPY rate does in between. Stripe bears the currency risk for the 2-day window. Architecturally: the authorization record stores both the original currency/amount ($100 USD) and the locked exchange rate and converted amount (¥14,500 at 145 JPY/USD). The capture uses the stored converted amount, not the current rate. The exchange rate service is called once at authorization and the result is persisted — it's never re-fetched. This is important for correctness: if the exchange rate service is unavailable at capture time, the capture still works because the rate is already stored. The currency risk exposure is bounded by the authorization window (typically 7 days) and hedged by Stripe's treasury operations.
