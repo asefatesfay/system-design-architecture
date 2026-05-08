@@ -287,3 +287,32 @@ Surge zones are computed every 60 seconds per city zone (geohash cell). Stored i
 **Q5: "Uber operates in 70 countries with different regulations. In some countries, drivers must be licensed taxis. In others, anyone can drive. How does your system handle this regulatory complexity without becoming a mess of if-statements?"**
 
 > Regulatory rules are data, not code. We have a Rules Engine service that stores per-country, per-city regulatory requirements as configuration: `{country: "UK", city: "London", driver_license_type: "PCO", vehicle_inspection: "annual", surge_cap: 2.5x}`. When a driver registers, the onboarding flow queries the Rules Engine for their location and enforces the appropriate requirements. When a rider requests a trip, the Matching Service queries the Rules Engine to filter the driver pool — in London, only PCO-licensed drivers are eligible. When surge pricing is calculated, the Rules Engine caps it at the local maximum (some cities have surge caps). The Rules Engine is a separate service with its own database — adding a new country's regulations is a data change, not a code deployment. The if-statements exist in the Rules Engine's evaluation logic, not scattered across every service. New regulations are added by the compliance team via a configuration UI, not by engineers. This is the "policy as data" pattern — it's how you scale regulatory complexity without scaling engineering complexity.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**ETA calculation**
+Uber's ETA is not "distance / speed." It incorporates: real-time traffic from GPS traces of all active drivers, historical travel time by road segment by time-of-day, road closures, turn penalties, and an ML model trained on millions of completed trips. The ETA pipeline is a system in itself: a routing engine (graph search on road network) that queries a real-time traffic layer (updated every 30 seconds from driver GPS) and a historical traffic model (precomputed, stored in a geospatially-indexed store). ETA accuracy degrades if the traffic layer is stale — a key SLO is that no traffic observation should be more than 60 seconds old when used in routing.
+
+**Trip fraud detection**
+GPS spoofing (faking location to grab high-surge rides), fare manipulation (taking longer routes), fake trip creation. Detection: (1) GPS trace validation — compare the driver's reported GPS path against the expected road network path; large deviations trigger a flag. (2) Velocity checks — GPS coordinates that imply physically impossible speeds (>200 km/h) are rejected. (3) Trip pattern analysis — ML model trained on completed trip features (origin, destination, route taken, time) to detect anomalous fares.
+
+**Driver earnings and settlement**
+Drivers are paid weekly with complex fare calculations: base fare + per-minute rate + per-mile rate + surge multiplier + tips + bonuses − Uber's commission. This is a financial system requiring cent-level accuracy, audit logs, and reconciliation against bank transfers. The earnings ledger is separate from the trip database — a double-entry accounting system where each trip creates a credit to the driver's ledger and a debit to Uber's revenue ledger.
+
+### Critical Questions
+
+> **"A driver's GPS is spoofing their location to grab rides in a high-surge area they're not actually in. How do you detect this in real time?"**
+
+Multi-layer detection: (1) **Physics validation** — compare consecutive GPS readings. If the driver's reported position changes by 10km in 5 seconds, it's impossible. The location service rejects coordinates that imply speed > 250 km/h. (2) **Cell tower triangulation cross-check** — mobile devices report both GPS and cell tower data. If GPS says the driver is in Manhattan but cell tower data shows they're in Brooklyn, the discrepancy is flagged. (3) **Behavioral pattern** — a driver who claims to be in a surge zone but never gets a trip despite being "available" for 20+ minutes in a claimed high-demand area is anomalous. (4) **Network-level** — the driver's IP geolocation (often accurate to city level) cross-checked against GPS. Consistent multi-signal discrepancy triggers: immediate removal from that geohash's available-driver pool, account flag for manual review.
+
+> **"Uber's surge pricing multiplier changes every minute by geo-cell. You have 500K drivers and 2M riders. How do you recompute surge for every cell every 60 seconds?"**
+
+Supply (drivers) and demand (riders) per geohash cell are maintained in Redis as live counters: `driver_count:{geohash}` and `rider_count:{geohash}`, updated on every location ping (every 4 seconds). The surge computation is a simple ratio: `surge_multiplier = f(rider_count / driver_count)` per cell. A dedicated Surge Service reads all active geohash counters from Redis every 60 seconds (a scan of ~10,000 active cells), computes the multiplier, and writes the result back to Redis: `surge:{geohash}` → multiplier. The rider and driver apps poll for surge in their current cell every 15 seconds — served directly from Redis. Total Redis operations: 10,000 reads (counter scan) + 10,000 writes (multiplier update) per minute = trivial. The bottleneck is not computation — it's ensuring driver/rider location updates reach Redis within the 60-second window, which requires the location ingestion pipeline to be low-latency.
+
+> **"A rider cancels 30 seconds after matching. The driver has already started driving. Who pays the cancellation fee, and how does your system ensure exactly-once charging?"**
+
+Business logic: if cancellation is within a grace period (typically 2 minutes) AND the driver has not yet moved beyond a threshold distance, the rider is not charged. If outside grace period or driver has started moving, the cancellation fee applies. Implementation: the Cancellation Service reads the match timestamp and driver's current GPS position (most recent, from Redis). If `now - match_time > grace_period` OR `driver_distance_traveled > threshold`, it triggers a charge via the Payment Service with an idempotency key: `cancel_charge:{trip_id}`. The idempotency key ensures that if the Cancellation Service retries (on timeout), the Payment Service recognizes the duplicate and returns the original charge result without double-charging. The charge result is written to the Trip record atomically with the cancellation status update — both in the same Postgres transaction.

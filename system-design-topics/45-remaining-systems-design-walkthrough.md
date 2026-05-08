@@ -715,3 +715,62 @@ flowchart TD
 **Q2: "ChatGPT has a 'memory' feature that remembers facts about you across conversations. How is this implemented without putting your entire history in every prompt?"**
 
 > Memory is a retrieval problem, not a context window problem. The full conversation history is never put in the prompt — that would be too large. Instead: a Memory Service extracts key facts from conversations ("user is a software engineer," "user has two kids," "user prefers concise answers") and stores them as structured records in a vector database (Pinecone, Weaviate). Each fact is embedded as a vector. When a new conversation starts, the system retrieves the top-K most relevant memories using semantic similarity search: embed the user's first message, find the K nearest memory vectors, inject those K facts into the system prompt. This is Retrieval-Augmented Generation (RAG) applied to personal memory. The prompt injection: "The following facts are known about this user: [K retrieved memories]." This adds ~500 tokens to the context — manageable. The memory store is updated after each conversation: new facts are extracted and added, contradicted facts are updated or removed. The vector database handles the semantic search efficiently — even with 10,000 stored memories per user, retrieval takes < 50ms.
+
+---
+
+## Staff Engineer Review
+
+### Systemic Gaps Across All Eight Systems
+
+The individual Q&A sections in this file are strong, but a staff engineer would flag these as missing in every system covered:
+
+**Observability and on-call design**
+No system discusses how engineers know when something is broken. Missing: SLO definitions (e.g., "checkout success rate ≥ 99.9%"), error budgets, alerting thresholds, runbooks for common failure modes, and dashboards. For a staff engineer, operability is as important as initial design. A system you cannot observe and debug in production is not production-ready.
+
+**Cost modeling**
+Every architectural decision has a cost implication. GPU inference for ChatGPT, CDN egress for TikTok, S3 storage for Snapchat, Redis memory for Shopify flash sales — none are costed. Staff engineers are expected to validate designs against budgets. "We'll use Redis" without knowing whether Redis can fit the working set in memory at a given scale is incomplete design.
+
+**Data compliance / GDPR**
+All eight systems operate globally. "Right to be forgotten" (GDPR Article 17) requires deleting a user's data across all systems — primary DB, search indexes, ML training sets, analytics warehouses, CDN logs — within 30 days of request. None of the walkthroughs address deletion pipelines. This is a non-trivial engineering problem: Elasticsearch does not support row-level deletion without index rebuild; ML training sets may contain user data that cannot be surgically removed without retraining.
+
+### Additional Critical Questions by System
+
+---
+
+#### Amazon
+
+> **"Your order service is down. A customer completes checkout — their card is charged but no order is created. How do you detect and recover from this?"**
+
+This is the classic two-phase commit problem across payment and order services. Mitigation via the Saga pattern: the checkout flow publishes a `payment_charged` event to Kafka before calling the Order Service. The Order Service consumes this event and creates the order. If the Order Service is down, the event stays in Kafka (durable, retained for 7 days). When the Order Service recovers, it consumes the event and creates the order — the customer's order appears retroactively. Reconciliation job: nightly, compare payment records against order records. Any payment with no corresponding order after 1 hour triggers an alert and a compensating order creation. The customer receives a delayed confirmation email — acceptable for order creation; not acceptable for inventory reservation (which must be synchronous to avoid overselling).
+
+---
+
+#### LinkedIn
+
+> **"GDPR requires deleting all of a user's data within 30 days of account deletion. Their posts are embedded in other users' feeds, cached in Redis, and indexed in Elasticsearch. What's your deletion pipeline?"**
+
+Deletion is a multi-system operation coordinated by a Deletion Service. Steps: (1) **Soft delete** (immediate): set `account_status=deleted` in the Profile DB. The API layer returns 404 for the user's profile immediately. (2) **Feed eviction**: publish `user_deleted:{user_id}` to Kafka. Feed Service consumers add this user to a "deleted users" filter in Redis — cached feeds containing this user's posts are filtered on read, then expire naturally. (3) **Elasticsearch**: a `delete_by_query` on `author_id = {user_id}` runs async with throttling. (4) **Primary DB**: a background deletion job deletes the user's posts, connections, and messages from the primary database in batches. (5) **ML training data**: user-identifiable data is removed from the offline feature store via a scheduled scrub job — this takes up to 30 days and is the rate-limiting step for GDPR compliance. (6) Audit trail: a compliance log records each step's completion timestamp to prove regulatory compliance.
+
+---
+
+#### TikTok
+
+> **"Your recommendation model was trained on data that turns out to be biased toward a specific demographic. How do you detect this and retrain without taking the FYP system offline?"**
+
+Detection: fairness metrics run weekly on a stratified sample of recommendations, measuring distribution of content served per demographic cohort. If any cohort's content diversity score (measured by creator diversity, topic distribution) falls below a threshold, a bias alert is triggered. Retraining: the model is retrained offline on a bias-corrected dataset (re-weighted samples to balance demographic representation). The new model is A/B tested against the current model on a 1% traffic slice — measuring both engagement *and* fairness metrics simultaneously. If the new model passes both, it is gradually rolled out via a feature flag (1% → 10% → 50% → 100% over 5 days). The current model continues serving 99%+ of traffic during the entire retraining and validation cycle. Rollback: if the new model underperforms on engagement, the feature flag is disabled — traffic reverts to the old model instantly with no user impact.
+
+---
+
+#### ChatGPT
+
+> **"A user's conversation contains their medical history, stored in your conversation DB and potentially in the GPU's KV cache. How do you ensure encryption at every layer?"**
+
+Encryption at rest: the Conversation DB (Postgres) is encrypted at the tablespace level (AES-256). S3 storage uses server-side encryption. At transit: all API calls are TLS 1.3. In GPU memory: this is the hard one — standard GPU memory does not support encryption (encrypting/decrypting on every memory access would be prohibitively slow). Mitigations: (1) GPU servers run in dedicated, isolated infrastructure with physical access controls; no shared tenancy with other companies. (2) KV cache TTLs are short (evicted after session ends or after N minutes of inactivity — the sensitive data does not persist in GPU memory long-term). (3) For regulated industries (healthcare), offer a "no conversation logging" mode: the KV cache is ephemeral and the Conversation DB write is disabled entirely. The user gets no history but maximal data minimization.
+
+---
+
+#### Airbnb
+
+> **"A host cancels a booking 24 hours before check-in. Your system must refund the guest, notify them, update availability, and optionally apply a host penalty — all reliably. How?"**
+
+Use the Saga pattern with compensating transactions. The cancellation triggers a saga orchestrated by a Cancellation Service: (1) **Refund** — call Payment Service with `refund(payment_id, amount, reason="host_cancel")`. Idempotency key: `refund:{booking_id}`. (2) **Notify guest** — publish `booking_cancelled` event to Kafka; Notification Service sends email/push. If notification fails, it retries with exponential backoff; failure to notify does not roll back the refund. (3) **Update availability** — update the listing's availability calendar to mark the dates as open again. (4) **Host penalty** — if the cancellation is within 24 hours and the host has exceeded their cancellation threshold, call the Penalty Service to apply a fee to the host's payout. If any step fails, the Saga logs the failure, alerts on-call, and retries with backoff for up to 24 hours. The refund is always step 1 and is the highest priority — the guest must be refunded even if subsequent steps fail. The system logs each step's completion status in a saga state table (Postgres) for auditability.

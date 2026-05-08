@@ -250,3 +250,32 @@ flowchart LR
 **Q5: "Spotify pays royalties based on play counts. A play is counted after 30 seconds of listening. How do you ensure this count is accurate and can't be gamed by bots?"**
 
 > Play count accuracy has two parts: correctness and fraud detection. For correctness: the client sends a "play event" after 30 seconds of actual audio playback (not just 30 seconds elapsed — we track actual audio position). The event includes track_id, user_id, device_id, timestamp, and a session token. The event goes to a stream processing pipeline (Kafka → Flink) that deduplicates by (user_id, track_id, session_id) within a 24-hour window — the same session can't count twice. For fraud detection: bot streams have detectable patterns — same user_id playing the same track on loop, thousands of plays from one IP, new accounts with no listening history suddenly generating millions of plays. We run anomaly detection on the play event stream: flag accounts with play velocity > 3 standard deviations from their historical average, flag IP addresses generating > 1000 plays/hour, flag tracks with sudden play spikes from accounts with no prior activity. Flagged plays are quarantined and reviewed before being counted for royalties. The royalty calculation runs on the verified play count, not the raw event count.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Podcast hosting vs. music**
+Spotify stores and serves podcasts (arbitrary-length audio, uploaded daily by anyone). This is a fundamentally different content pipeline from music: no licensing rights management, no label approval, variable file formats (MP3, AAC, WAV submitted by creators), and no pre-existing catalog — podcasts are user-generated. The ingestion pipeline for podcasts is closer to YouTube's upload pipeline, while music is a curated catalog. Two separate pipelines must coexist behind the same playback API.
+
+**Collaborative playlists**
+Multiple users editing a playlist concurrently (adding tracks, reordering, removing). This is a lightweight collaborative state problem — less complex than Figma/Google Docs, but still requires conflict resolution. Last-write-wins on track order is usually acceptable. The playlist state is a versioned list in a document store (Cassandra or DynamoDB), with optimistic concurrency control: the client submits an edit with the current version number; the server rejects edits that arrive with a stale version and asks the client to re-fetch and retry.
+
+**Gapless playback**
+Listening to an album with no silence between tracks requires pre-fetching the next track before the current one ends. The client monitors playback position and begins pre-fetching the next track when ~20 seconds remain. The audio stream stitching happens in the client's audio buffer: the client decodes the end of track N and the beginning of track N+1 and blends them in the audio pipeline. This requires the CDN response for the next track to arrive before playback reaches the end of the current track — which means the pre-fetch must start early enough to account for worst-case network latency.
+
+### Critical Questions
+
+> **"Spotify's 'Discover Weekly' is generated for 400M users every Monday. Estimate the compute time and cost, and how you'd parallelize it."**
+
+Each user's Discover Weekly requires: (1) load their listen history (last 30 days), (2) run collaborative filtering to find similar users, (3) identify tracks those users listened to that the target user hasn't, (4) rank by predicted affinity, (5) curate to 30 tracks. At ~100ms of compute per user on a single core, 400M users = 40M CPU-seconds = ~11,000 CPU-hours. Parallelized across 10,000 cores = 1.1 hours of wall-clock time — achievable in a Sunday-night batch window. On AWS at $0.10/CPU-hour, cost is ~$1,100 per week in compute alone (plus storage I/O). The parallelization strategy: partition users by user_id hash, one Spark job per partition, run on a Hadoop/EMR cluster spun up Sunday night and torn down Monday morning.
+
+> **"A track's license is revoked mid-stream. How do you immediately stop all active playback without users being able to cache and replay it?"**
+
+License revocation must propagate within seconds. Steps: (1) Mark the track as `licensed=false` in the catalog DB. (2) Publish a `license_revoked:{track_id}` event to Kafka. (3) CDN: purge all edge caches for that track's URLs via CDN invalidation API (takes 10–30 seconds). (4) Active streams: the streaming server stops serving new segments for that track_id. Clients on the current segment finish it (< 10 seconds of audio) and then request the next segment, which returns a 403. (5) Client-side cache: Spotify's offline sync client stores encrypted tracks with a key fetched from the license server on each play. Revoking the license means the license server stops issuing decryption keys for that track — offline cached copies become unplayable immediately on next play attempt.
+
+> **"You have 100M tracks. For any song, you need to find acoustically similar songs in < 100ms for radio/autoplay. How?"**
+
+Acoustic similarity is computed offline, not at query time. The pipeline: extract audio features from every track (tempo, key, timbre, loudness — using signal processing or a pretrained audio embedding model), then represent each track as a dense vector in a high-dimensional space. Store these vectors in an approximate nearest-neighbor (ANN) index (e.g., FAISS, ScaNN, or Pinecone). At query time, look up the current track's vector and return the K nearest neighbors — this is a vector search, not a full scan, taking < 100ms even at 100M vectors. The ANN index is built offline (weekly) and served from memory on dedicated ANN servers. The pre-computed neighbor lists for popular tracks can also be cached in Redis for the most common "similar to X" queries, reducing query time to sub-millisecond.

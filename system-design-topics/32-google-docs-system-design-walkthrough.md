@@ -614,3 +614,32 @@ The interviewer is testing end-to-end latency reasoning.
 The interviewer is testing whether your storage strategy is consistent with your feature requirements.
 
 > Good catch — this is a real tension. The op-log compaction affects storage, not the search index. Elasticsearch indexes every document when it's created and retains the index indefinitely (or until explicitly deleted). The compaction only affects the op-log in Bigtable — we delete individual ops and replace them with hourly snapshots. The search index in Elasticsearch is separate and unaffected. So searching for a 3-year-old message works fine — Elasticsearch has it indexed. The only thing we lose with compaction is the ability to replay individual ops from 3 years ago (for version history). We retain hourly snapshots for that. The search result returns the document content and a timestamp — if the user wants to restore to that exact point, we load the nearest hourly snapshot and replay forward. The key insight: search index and op-log are independent systems with independent retention policies.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Comment threading and resolution**
+Comments are anchored to text ranges. When the text under a comment is deleted, how does the comment survive? This is a non-trivial anchoring problem: comments must be attached to logical document positions (character offsets in OT terms) that survive operations shifting text before them. The comment anchor must transform along with every OT operation that affects text before it.
+
+**Export pipeline**
+Generating `.docx` and `.pdf` at scale is a separate async job pipeline. A user clicking "Download as PDF" should not block a web server — it should enqueue a render job, wait for a worker to render the document (potentially a headless Chrome or LibreOffice instance), store the result in S3, and return a signed download URL.
+
+**Access revocation mid-session**
+If you revoke a collaborator's access while they are actively editing, you must push a revocation event over their existing WebSocket connection, close the connection server-side, and ensure their buffered-but-undelivered operations are dropped. In-flight operations they submitted before revocation that haven't been applied yet need to be rejected by the OT server after verifying current permissions.
+
+### Critical Questions
+
+> **"OT requires a central server to impose a total order on operations. What happens to your OT server during a 10-second network partition?"**
+
+During the partition, clients buffer operations locally. The OT server is unavailable — no operations are applied to the shared document. After the partition heals, clients reconnect and submit their buffered operations. The server transforms all buffered operations against each other using OT, producing the canonical merged state. This means: up to 10 seconds of diverged local state per client, converged on reconnect. Clients experience this as a "flash" where their local edits shift position as others' operations are applied. This is acceptable but must be communicated to users ("Reconnecting…").
+
+> **"A document has 200,000 words and 80 collaborators. How does your OT server's CPU scale with concurrent operation volume?"**
+
+OT transformation is O(n) per operation where n is the number of concurrent unacknowledged operations from other clients. With 80 collaborators each generating ~5 operations/second = 400 ops/sec. Each op must be transformed against pending ops from all other clients. In the worst case this is O(80 × 400) = 32,000 transformations/second. At microseconds per transformation this is manageable on a single server, but the OT server becomes a single point of failure and a bottleneck. The real scaling strategy is document-level partitioning: each active document's OT stream runs on one server instance, and you scale by adding instances (each serves different documents), not by making a single instance faster.
+
+> **"How do you prevent a malicious editor from injecting invisible characters or encoding exploits into a shared document?"**
+
+Operations must be validated server-side before being applied and broadcast. Validation includes: operation schema conformance (valid OT operation structure), character allowlist/denylist (no null bytes, RTL override characters, or oversized payloads), content sanitization before HTML rendering in the client (the document's JSON representation must be serialized through a safe renderer). The server is the trust boundary — clients are untrusted. An operation that passes OT transformation but contains malicious content must be rejected at the validation layer before being stored or broadcast.

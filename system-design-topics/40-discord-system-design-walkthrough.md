@@ -262,3 +262,32 @@ Presence is stored in Redis with a TTL. If a client disconnects without sending 
 **Q5: "Discord stores message history permanently. After 10 years, you have petabytes of messages. Most of them are never read again. How do you manage storage costs?"**
 
 > Tiered storage based on access recency. Hot tier (ScyllaDB, in-memory): messages from the last 30 days. These are frequently accessed — users scroll back through recent history. Warm tier (ScyllaDB, SSD): messages from 30 days to 2 years. Accessed occasionally — someone searches for a message from last year. Cold tier (S3 Glacier): messages older than 2 years. Rarely accessed — only when someone specifically searches for old content. The migration: a background job runs nightly and moves messages older than 30 days from hot to warm, and older than 2 years from warm to cold. The read path: the Message Service checks hot tier first, then warm, then cold (with a 3-5 second retrieval delay for Glacier). For search, Elasticsearch indexes all messages regardless of tier — the search result returns a message_id, and the Message Service fetches the content from whichever tier it's in. The cost reduction: S3 Glacier is ~$0.004/GB/month vs ScyllaDB's ~$0.10/GB/month — 25× cheaper for cold data. Given that 90% of messages are never read after 30 days, this reduces storage costs by ~60%.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Large server (guild) architecture**
+Discord servers with 500K+ members (major game studios, public communities) cannot use standard push fan-out: pushing one message to 500K WebSocket connections would take seconds and saturate any reasonably-sized WebSocket tier. Discord's solution for large guilds: a hybrid fan-out model. Members of large guilds receive messages via a pull model — the client polls for new messages periodically, rather than receiving them via an always-open push connection. The threshold (approximately 100K members) is where Discord switches from push to pull for guild message delivery.
+
+**Message search**
+Full-text search across millions of messages per server with permission awareness: you can only see messages from channels you have access to. A naive global Elasticsearch index would expose messages to users who shouldn't see them. The correct design: index documents with `channel_id` and `guild_id` metadata; every search query includes a filter of `channel_ids` the requesting user can access (looked up from the permissions service before the search query). The permission filter is applied as an Elasticsearch post-filter, not as a full re-scan.
+
+**Bot gateway and rate limiting**
+Discord has 1M+ bots, each opening a WebSocket connection to the Gateway. Bots are high-throughput event consumers (they receive every event in every server they're in). The Gateway must isolate bot traffic from user traffic to prevent a misbehaving bot (e.g., one processing events slowly) from causing backpressure on the delivery queue. Discord assigns bots to sharded gateway connections: a bot in 10,000 servers is split across multiple gateway shards (one shard per 2,500 guilds), rate-limited by event throughput per shard.
+
+### Critical Questions
+
+> **"A Discord server has 800K members. Someone posts a message in #general. How do you fan-out this message without overwhelming your message service?"**
+
+For large guilds (> 100K members), Discord does not use push fan-out. The message is written to the channel's message store (Cassandra, keyed by `channel_id + snowflake_timestamp`). Online members who have `#general` open receive the message via a lazy pull: their client periodically polls for new messages since the last seen snowflake ID, with a 1-second interval while the channel is in focus. Members who are not actively viewing `#general` receive a push notification only if they have unread mention badges — a much smaller fan-out. The result: a message in a 800K-member server causes at most a few thousand actual push deliveries (active viewers) plus a lazy poll wave from online members over the next few seconds. The Cassandra write is the only synchronous operation; everything else is eventually consistent.
+
+> **"Discord stores 'infinite' message history. A user tries to load messages from 3 years ago. How do you retrieve them efficiently?"**
+
+Messages are stored in Cassandra partitioned by `(channel_id, bucket)` where `bucket` is a time-based integer (e.g., one bucket per month). Loading messages from 3 years ago = query a specific historical bucket. Cassandra handles this efficiently: the partition key is `(channel_id, bucket)`, the clustering key is the snowflake message ID (monotonically increasing, time-encoded). The query: `SELECT * FROM messages WHERE channel_id = X AND bucket = Y ORDER BY message_id DESC LIMIT 50`. No full table scan — it's a targeted partition read. Cassandra's LSM tree handles cold reads well since old partitions are already compacted. Latency for historical reads is similar to recent reads (10–20ms), as long as the Cassandra nodes are not under heavy write strain from active channels.
+
+> **"Discord's 'typing indicator' broadcasts to all channel members when someone starts typing. At what member count does this become a denial-of-service vector, and how do you mitigate it?"**
+
+In a channel with 5,000 active members, if 100 users type simultaneously, each typing event fan-outs to 5,000 recipients = 500,000 WebSocket writes per typing event. Typing events repeat every 5 seconds while typing. This is a genuine DoS vector. Mitigations: (1) **Rate limit typing events** — accept at most 1 typing event per user per 5-second window per channel; discard the rest server-side. (2) **Cap recipients** — for channels above a member threshold (e.g., 500 active), stop broadcasting typing indicators entirely. The typing indicator is dropped from the UX. (3) **Aggregate** — instead of broadcasting per-user typing events, broadcast "N people are typing" from the server, collapsing N individual events into one aggregate push. The threshold for disabling typing indicators is a product decision, but the technical threshold where it becomes a performance concern is around 1,000 simultaneously active channel members.

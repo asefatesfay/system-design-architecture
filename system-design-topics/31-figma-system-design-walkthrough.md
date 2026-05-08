@@ -582,3 +582,32 @@ The interviewer is testing whether you've thought about the hot path carefully.
 The interviewer is testing operational maturity — can you actually run this system.
 
 > I'd work through the pipeline in order. First, check if the client is sending the delta — look at WebSocket frame logs on the client side. If the frame is sent, check if the Collaboration Node received it — look for the op_id in the node's structured logs. If received, check if Kafka produced successfully — look for the Kafka producer ack log. If Kafka acked, check if the broadcast happened — look for fan-out log entries for the room. If broadcast happened, check if the recipient's WebSocket received it — look at the recipient's client logs. This is a linear pipeline so the bug is at exactly one stage. The most common cause in practice: the recipient's WebSocket is in a half-open state — the TCP connection appears alive but packets aren't flowing. The fix: WebSocket ping/pong keepalive detects this within 30 seconds and triggers a reconnect.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Permission model depth**
+Viewer/editor/org-level ACL at the object level — not just the document level. How do you enforce "only editors can modify frame X" in a multiplayer context where operations are broadcast to all connected clients?
+
+**Operational transforms vs. CRDT trade-offs**
+The walkthrough presents CRDT as a given, but doesn't justify *why* not OT (Google Docs uses OT). A staff engineer would expect explicit reasoning: CRDTs trade higher merge complexity and metadata overhead for not needing a central sequencer, which is the right call when your conflict surface is rich canvas objects rather than linear text.
+
+**Version history / branching**
+Figma has a branching feature. How do you store diverging document states without duplicating terabytes of canvas data? The answer is a DAG of delta patches — branch points store a reference to a shared base snapshot plus a chain of branch-only operations.
+
+### Critical Questions
+
+> **"If 50 editors apply concurrent changes to the same component, what's your CRDT merge strategy, and can it produce a visually valid but semantically nonsensical result?"**
+
+The CRDT guarantees eventual convergence — all nodes agree on the same state. But that state may be unintended (e.g., two concurrent resizes produce an unexpected intermediate geometry). Figma resolves this with last-write-wins on most properties and merge semantics only for structural operations (add/remove nodes). The answer should acknowledge that CRDT correctness ≠ user intent correctness.
+
+> **"How do you implement 'restore to version from 3 days ago' without storing a full snapshot per version?"**
+
+Store a full snapshot at checkpoint intervals (e.g., every 100 operations or every save event) and maintain a forward-delta chain. Restoring to time T means: find the latest checkpoint before T, replay forward-deltas up to T. The tricky part: "restoring" creates a new operation in the current document history — you're not rolling back, you're applying a "set state to X" macro operation so collaborators still see a consistent log.
+
+> **"Your WebSocket server holds in-memory session state. When it crashes mid-session with 200 active collaborators, what happens?"**
+
+All 200 clients must reconnect. The server was the CRDT merge authority. On restart, you need to rebuild state from the persisted operation log in the database. Clients buffer outgoing operations locally during the reconnect window and re-submit them after the new session is established. This requires idempotent operation IDs — re-submitting must not double-apply. The missing design here is a per-session operation log with cursor positions per client so recovery is deterministic.

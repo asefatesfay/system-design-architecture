@@ -542,3 +542,32 @@ The interviewer is testing cost optimization thinking.
 The interviewer is testing your depth on adaptive bitrate streaming.
 
 > The viewer's player downloads the master manifest, which lists all quality levels with their bandwidth requirements: 4K at 15Mbps, 1080p at 4Mbps, 720p at 2Mbps, 480p at 1Mbps, 360p at 500Kbps, 240p at 250Kbps. The player starts at the lowest quality (240p) to avoid initial buffering. It downloads the first 6-second segment at 240p. While playing that segment, it measures the download speed: 250Kbps actual throughput. The ABR algorithm (typically a variant of BOLA or MPC) calculates: available bandwidth 250Kbps, buffer level 6 seconds, next segment should be 240p (250Kbps fits within 250Kbps with no headroom). It stays at 240p. If the connection improves to 600Kbps, the algorithm sees headroom and steps up to 360p on the next segment. The step-up is conservative (one level at a time) to avoid oscillation. Step-down is aggressive (can jump multiple levels) to prevent rebuffering. The viewer in rural India gets 240p — not great, but uninterrupted playback. The key design: the player never requests a quality level whose bitrate exceeds 80% of measured throughput, leaving headroom for network jitter.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Content ID / copyright detection**
+YouTube's most commercially critical system. When a video is uploaded, it's fingerprinted (audio + video hash) and matched against a database of 800M+ copyrighted works in real time. The fingerprinting algorithm (Content ID) extracts perceptual hashes that are robust to re-encoding, speed changes, and cropping. The match must complete before the video becomes publicly visible — typically within minutes of upload. This is a separate pipeline from transcoding, running in parallel.
+
+**Comment ranking**
+7 billion comments. "Top comments" is not chronological — it's ranked by a model trained on like/reply ratio, reply recency, author reputation, and spam signals. The ranking runs offline (pre-computed hourly for active videos) and must be permission-aware (deleted comments must disappear from all ranked lists immediately).
+
+**Live streaming architecture**
+Fundamentally different from VOD. RTMP ingest → real-time segment-based transcoding → HLS/DASH delivery targeting 5–10 second glass-to-glass latency. The live pipeline cannot buffer for quality — it must drop frames rather than introduce latency. DVR (rewinding a live stream) requires a rolling buffer of the last N minutes stored server-side, separate from the VOD architecture.
+
+### Critical Questions
+
+> **"A video is 40% through transcoding when the worker crashes. What happens?"**
+
+The transcoding job must be idempotent and restartable. Each video is split into chunks before transcoding begins (e.g., 2-minute segments). Each chunk is transcoded independently and its output is written to a temp S3 path with the chunk index. The job coordinator tracks which chunks have completed (stored in a job state table in Postgres). On worker crash, a new worker picks up the job, reads the completed chunk list, and resumes from the first incomplete chunk. No work is lost — only the partially-completed current chunk is re-transcoded. This requires chunk-level idempotency: re-transcoding chunk N from the same input produces byte-identical output (deterministic FFmpeg flags, same codec settings).
+
+> **"A 4K, 3-hour video is uploaded. Estimate storage cost across all transcoded resolutions."**
+
+3-hour source at 4K (raw): ~200 GB. After encoding to distribution format (H.265): ~30 GB for 4K. Transcoded resolutions: 4K (30GB), 1080p (10GB), 720p (5GB), 480p (2GB), 360p (1GB), 240p (0.5GB), audio-only (0.2GB) = ~49 GB total. Plus the source: ~250 GB total per video. With S3 at $0.023/GB/month, this is ~$5.75/month per 3-hour 4K video. YouTube hosts 800M+ videos — total storage is measured in exabytes. The economic incentive to delete rarely-watched videos is real; YouTube compresses or removes very old low-view videos to lower-quality formats.
+
+> **"How does YouTube's auto-caption pipeline work at scale across 100 languages?"**
+
+Auto-captions run as an async job after transcoding completes. The pipeline: extract audio track → run speech-to-text (Google's ASR model, language auto-detected) → generate timed caption file (WebVTT format) → store alongside the video. Language detection uses a short audio sample. For non-English content, the model routes to a language-specific ASR model. Translation to 100+ languages runs separately: source-language captions → machine translation (Google Translate API) per target language, stored as separate WebVTT files. The latency from upload to captions available is typically 1–24 hours depending on video length and language. The compute cost scales linearly with total audio duration — YouTube processes millions of hours of video per day, making this one of the largest ASR workloads in the world.

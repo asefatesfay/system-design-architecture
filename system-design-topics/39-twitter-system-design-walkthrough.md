@@ -262,3 +262,32 @@ Trending is based on **velocity** (rate of increase), not absolute count. "COVID
 **Q5: "You store tweets in Cassandra partitioned by user_id. A user deletes their account. How do you delete all their tweets, replies, and likes across the entire system?"**
 
 > Account deletion is an async, multi-step process — not a synchronous delete. When a user requests deletion: immediately mark the account as `pending_deletion` in the User DB and stop serving their content (profile returns 404, tweets are filtered from feeds). Then publish a `user_deletion_requested` event to Kafka. A deletion worker consumes this event and runs the cleanup pipeline: delete tweets from Cassandra (query the `user_tweets` partition — all tweets for this user_id are co-located, so this is one partition scan), remove their tweet_ids from any follower feed caches in Redis (expensive — we do this lazily: feed reads filter out deleted user content at read time), delete their likes and retweets from the engagement tables, remove them from the social graph (follower/following tables). The full deletion takes 30 days — this is intentional, to allow account recovery if the deletion was accidental. After 30 days, the account is permanently deleted and the data is purged from backups on the next backup rotation cycle. The user-visible experience: account appears deleted immediately (pending_deletion state), but the data cleanup happens in the background.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Quote tweets and threads**
+Threads are chains of self-replies — fetching one requires traversing a reply graph recursively. A naive implementation issues N database queries for a thread of depth N. The correct approach: store parent_tweet_id on each tweet, and pre-materialize the thread structure in a dedicated Thread Store (a graph or adjacency-list table, indexed by root_tweet_id). Fetching a full thread is a single query against the Thread Store, not recursive database calls. Quote tweets are stored as a tweet with a `quoted_tweet_id` reference; the quoted tweet's content is fetched separately and embedded at render time (with tombstone handling for deleted tweets).
+
+**Twitter Spaces (live audio)**
+WebRTC-based live audio rooms with asymmetric roles: one or more hosts who can speak, listeners who hear everything, and a permission model where listeners can "request to speak." Architecturally this is a many-to-many audio routing problem. Unlike Zoom (video conferencing), Spaces can have tens of thousands of listeners — pure WebRTC mesh is infeasible. The design requires a WebRTC SFU that receives audio from speakers and broadcasts to listeners via HLS-like audio streaming for large audiences (> 1,000 listeners), falling back to direct WebRTC for small rooms.
+
+**Content moderation at tweet velocity**
+500M tweets/day = ~5,800/second. ML-based toxicity scoring must complete before each tweet is indexed in search (typically within 5–15 seconds of posting). The pipeline: tweet created → published to Kafka → consumed by a Moderation Service that runs the tweet text through a toxicity classifier (GPU-accelerated) → result stored alongside the tweet as a `moderation_score` field → the Search Indexer reads this score and sets the tweet's `searchable` flag accordingly. Tweets with high toxicity scores are delayed from search indexing until manual review.
+
+### Critical Questions
+
+> **"A tweet goes viral — 10M impressions in 1 hour. 500K users try to retweet the same tweet simultaneously. How does your system handle the write amplification?"**
+
+The retweet count on a single tweet seeing 500K simultaneous increments is a classic write hotspot. Solutions: (1) **Counter sharding** — maintain N shard counters for the tweet's retweet count (e.g., 100 shards in Redis). Each write goes to a random shard. The displayed count is the sum of all shards (read is slightly more expensive, but writes are distributed). (2) **Approximate counting** — use a probabilistic counter (HyperLogLog or HLL in Redis) for display purposes. Exact counts are reconciled in a batch job. (3) **Write buffering** — batch retweet count increments in memory (10-second windows) and flush to the database in one bulk update. The displayed count may lag by up to 10 seconds during a viral event — acceptable at that scale. For the fan-out of 500K retweets into timelines: the tweet is a celebrity/viral tweet, so it uses fan-out on read — followers' timelines fetch the tweet on load rather than each retweet writing to 500K caches.
+
+> **"Twitter's search must index tweets within 15 seconds of posting. Walk me through the indexing pipeline."**
+
+Tweet created → Tweet Service writes to Postgres and publishes `tweet_created` event to Kafka with full tweet payload. A Search Indexer consumer (Kafka consumer group) reads the event, runs the moderation classifier (~1 second GPU inference), and on pass: pushes the document to Elasticsearch via the bulk index API. Elasticsearch bulk indexing commits every 1 second (refresh interval). End-to-end: Kafka consumer lag (~100ms) + moderation (~1s) + Elasticsearch refresh (≤1s) = ~2–3 seconds for a compliant tweet; potentially delayed for flagged tweets. The Search Indexer must be horizontally scaled to handle 6,000 events/second with head-of-line blocking prevention: moderation must be async (non-blocking per message) or sharded so one slow moderation call doesn't delay all subsequent tweets.
+
+> **"A user with 200M followers is permanently banned. How do you remove their tweets from 200M followers' cached timelines?"**
+
+You don't purge 200M caches — that's infractically slow and causes a write storm. Instead: (1) Set the user's account status to `banned` in the User Service (immediate). (2) Publish a `user_banned:{user_id}` event. (3) The Feed Service reads this event and adds the banned user to a "blocked accounts" list in Redis (a set, TTL-less). (4) At feed render time, the Feed Service filters out tweets from any user in the blocked list. This is a filter-on-read approach: the banned user's tweets remain in cached timelines but are filtered out before serving. The cache eventually expires and is rebuilt without the banned user's content (since new fan-outs for that user are stopped immediately). The banned user's tweets are purged from the search index asynchronously (a backfill job), from the Elasticsearch index segment by segment.

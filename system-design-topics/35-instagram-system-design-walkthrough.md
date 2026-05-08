@@ -252,3 +252,32 @@ Photos are stored in multiple sizes (thumbnail 150px, medium 640px, full 1080px)
 **Q5: "Instagram Stories disappear after 24 hours. How do you implement this at scale — 500M users each potentially having active stories?"**
 
 > Stories use TTL-based expiry at multiple layers. In Cassandra, story records have a TTL of 86,400 seconds (24 hours) — Cassandra automatically tombstones and eventually deletes them. In Redis, the story feed for each user (`stories:{user_id}`) is a sorted set with score = expiry_timestamp. A background job runs every minute and calls `ZREMRANGEBYSCORE stories:{user_id} 0 {now}` to remove expired stories. Media in S3 has a lifecycle policy: objects tagged `story` are deleted after 25 hours (1 hour buffer). The viewer's feed: when loading stories, we fetch the sorted set, filter out any with expiry < now (belt-and-suspenders), and return the rest. The 24-hour boundary is soft — a story might appear for 24h 5min due to TTL imprecision, which is acceptable. The key design: expiry is enforced at the storage layer (Cassandra TTL, S3 lifecycle) not just the application layer, so there's no risk of stories persisting due to an application bug.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Reels recommendation**
+Instagram Reels uses a TikTok-style ML-driven feed — not the social-graph-based photo feed. The ranking model for Reels is trained on watch-time, replays, and shares (not likes alone), and surfaces content from creators the user has never followed. This is a fundamentally different pipeline from the photo feed. The two must coexist in the same app: photo feed = social-graph fan-out; Reels feed = ML candidate generation + ranking. Conflating them in the design misses a core architectural distinction.
+
+**Stories expiry**
+Stories expire at 24 hours. The expiry pipeline: a background job (cron or Kafka-scheduled) scans the Stories table for entries with `created_at < now() - 24h`, marks them as expired, removes them from followers' cached story rings (Redis), deletes media from CDN edge caches, and schedules S3 deletion. Edge case: what if the job misses a story (job crash between marking expired and purging Redis)? The next job run must be idempotent — re-processing an already-expired story must not corrupt follower feeds.
+
+**Shadow banning / content moderation**
+Instagram shadow-bans accounts algorithmically: the account can post, but their content does not appear in hashtag pages, Explore, or non-followers' feeds. Implementation: a `visibility_flags` field per account in the profile store. The feed generation and search services filter content from shadow-banned accounts without notifying the user. The flag is set by a classifier trained on spam signals, bot behavior, and policy violations — not by manual review.
+
+### Critical Questions
+
+> **"A user with 50M followers posts a photo. You are doing fan-out on read for celebrities. 30 million followers open the app simultaneously at the same moment. How do you prevent a stampede to the celebrity's feed?"**
+
+This is the cache stampede problem at massive scale. Three defenses: (1) **Probabilistic early expiry** — before the cached celebrity feed actually expires, a fraction of requests proactively refresh it, preventing a simultaneous expiry flood. (2) **Request coalescing** — when the cache misses, only one request fetches from the origin; all others wait on a lock (Redis SETNX) for the first result. (3) **Push pre-warming** — when a high-follower account posts, the Feed Service pre-warms a partial fan-out to a CDN-like edge cache tier before any follower requests it. The combination means no more than 1–2 requests ever reach the celebrity's raw post record regardless of how many followers open the app simultaneously.
+
+> **"Instagram's algorithm resurfaces old posts with high engagement. How does your feed service decide to show a week-old post?"**
+
+The feed ranking model scores all candidate posts — not just recent ones. Candidates are generated from: recent posts from followees (last 7 days), posts the user hasn't seen yet regardless of age (tracked via impression log), and algorithmically boosted posts (high engagement velocity relative to posting time). The impression log (`user_id → post_id seen`) is stored in a bloom filter per user — space-efficient membership test to avoid reshowing seen posts. A post from a week ago with a sudden engagement spike (e.g., a celebrity shared it) gets a high recency-adjusted engagement score and re-enters the candidate pool. The ranking model produces a score per candidate; the feed service takes the top-K and orders them.
+
+> **"A user blocks another user, but the blocker has already fanned one of their posts into the blockee's feed cache. How do you handle this?"**
+
+The block relationship must be checked at feed read time, not just at fan-out time. Fan-out writes posts to feed caches eagerly, but the feed service applies a block filter before serving: when a user loads their feed, the service fetches their block list from a fast store (Redis set, updated on block action), then filters out any cached post from a blocked account. The block takes effect within seconds — the next time the blockee refreshes their feed. Posts already rendered on screen are not retroactively removed (client-side enforcement is impractical). This "write eagerly, filter on read" model is simpler and more correct than trying to retroactively purge fan-out caches on every block action.

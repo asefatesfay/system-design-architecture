@@ -473,3 +473,32 @@ The interviewer is testing whether you understand the real-world implications of
 The interviewer is testing whether you can add a feature that appears to conflict with your architecture.
 
 > This is a genuine conflict — you can't scan encrypted content server-side. There are three approaches. First, client-side scanning: run the spam model on the device before encrypting. The client checks the message against a local model (downloaded periodically) and either blocks it or adds a spam score to the message metadata. This preserves E2E encryption but is bypassable by modified clients. Second, hash-based matching: maintain a database of known-bad message hashes. The client computes a hash of the plaintext before encrypting and sends it alongside the ciphertext. The server checks the hash against the blocklist. This only catches known spam, not novel content. Third, metadata signals: detect spam from behavioral patterns — sending rate, new account age, group membership patterns — without reading content. This is what WhatsApp actually does. The 50ms constraint rules out any server-side ML inference on the message path — that would require decryption, which breaks E2E. The honest answer: you can't do content-based spam detection with true E2E encryption. You choose one or the other.
+
+---
+
+## Staff Engineer Review
+
+### Missing Sections
+
+**Key distribution problem**
+E2E encryption requires key exchange via the Signal Protocol. How does the server bootstrap key exchange without ever seeing plaintext? WhatsApp uses a pre-key bundle model: each device uploads a set of one-time pre-keys to the server. When Alice wants to message Bob for the first time, she fetches one of Bob's pre-keys, derives a shared secret, and encrypts the first message. The server never learns the shared secret. The hard case: Bob gets a new device. His new device generates new keys. All of Alice's messages encrypted to old keys are unreadable. Solution: Bob's device notifies the server, which notifies all contacts to re-initialize the session with new keys.
+
+**Group messaging key distribution**
+Group chats with 1,024 members (WhatsApp's limit) use "Sender Keys." Each sender generates a single group sender key and distributes it to all 1,024 members — encrypted individually to each member's public key. After that, the sender encrypts each group message once with their sender key (not 1,024 times). This is the missing performance optimization; naive fan-out with individual encryption would be 1,024× CPU cost per message.
+
+**Spam/abuse detection without reading messages**
+WhatsApp can't read E2E messages, yet detects spam. The approach: metadata analysis (message frequency, graph of who messages whom, account age, device fingerprint) plus client-side on-device ML that can report hashes of flagged content (with user opt-in). The server never decrypts content but can detect behavioral patterns.
+
+### Critical Questions
+
+> **"If a user loses their phone, they get a new device and new keys. How do you re-establish E2E encryption with all their contacts without the server having access to their private key?"**
+
+On the new device, the user generates a fresh identity key pair and uploads new pre-keys to the server. The server notifies all of their contacts that the identity key has changed. The next time a contact sends a message, their app shows a "Security code changed" warning and initiates a new session using the new pre-keys. The old sessions are gone — messages sent before the device loss that haven't been delivered are unrecoverable (they were encrypted to the old key). This is the correct security trade-off: key loss means session loss, not plaintext exposure. WhatsApp's encrypted backup feature (to Google Drive or iCloud) mitigates this by backing up the message history encrypted with a key derived from the user's PIN — but this is a separate recovery path, not a server-side solution.
+
+> **"A group has 1,024 members. One member sends a message. How many encryption operations does the sender's device perform?"**
+
+With Sender Keys: one encryption operation (encrypt the message with the group sender key). The initial sender key distribution to 1,024 members required 1,024 individual encryptions (one per member's public key), but that happened once at group creation (or when a new member joins). Subsequent messages cost O(1) encryption regardless of group size. A new member joining requires the sender to re-encrypt and distribute a new sender key to all 1,025 members — this is the expensive operation at group membership changes, not at message send time.
+
+> **"Your message queue stores encrypted messages for offline users. How long do you retain them, and what's your storage cost at 100B messages/day?"**
+
+WhatsApp retains undelivered messages for 30 days. After 30 days, they are deleted. Average message payload (encrypted): ~1KB for text, ~150KB for images. At 100B messages/day × 1KB average × 30-day retention = 3 PB of queued message storage. In practice the average is lower because most messages are delivered within seconds (< 1% are queued for more than a day). Real retention cost is closer to 30 days × (1% undelivered × 100B messages × 1KB) = ~30 TB — manageable. The design point: never store plaintext. The queue holds ciphertext blobs. Even if the queue store is breached, messages are unreadable without the recipient's private key.
