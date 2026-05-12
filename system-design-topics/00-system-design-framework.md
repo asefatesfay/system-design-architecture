@@ -140,6 +140,438 @@ Cache:
 
 ---
 
+## Step 2.5 — Back-of-the-Envelope Exercises
+
+> **How to use this section:** Work each exercise yourself first. Then compare to the solution. The most important part is not the final number — it's the design consequence in bold at the end. That's the skill: connecting a number to an architectural decision.
+
+---
+
+### Level 1 — Simple Estimation Drills
+
+These are single-step calculations to build fluency with the key conversions. Do them mentally in under 30 seconds each.
+
+---
+
+**Exercise 1.1 — Requests per second**
+
+> A photo sharing app has 50 million DAU. Each user views an average of 30 photos per day.
+> How many photo read requests per second at peak (assume 3× average)?
+
+<details>
+<summary>Solution</summary>
+
+```
+Average:
+  50M users × 30 photos/day = 1.5B reads/day
+  1.5B / 86,400s ≈ 17,400 reads/s
+
+Peak (3× average):
+  17,400 × 3 ≈ 52,000 reads/s
+```
+
+**Design consequence:** 52K reads/s cannot be served from a single database. This number immediately tells you that you need a CDN for the photo bytes and a read replica or cache layer for photo metadata. You haven't even drawn a box yet — and you already know a single-server design is wrong.
+
+</details>
+
+---
+
+**Exercise 1.2 — Storage size**
+
+> A messaging app stores text messages. Average message size is 200 bytes.
+> The app has 100M DAU. Each user sends 20 messages per day.
+> How much storage does one year of messages require?
+
+<details>
+<summary>Solution</summary>
+
+```
+Messages/day: 100M × 20 = 2B messages/day
+Storage/day:  2B × 200 bytes = 400 GB/day
+One year:     400 GB × 365 = 146 TB
+```
+
+**Design consequence:** 146 TB in one year cannot live in a single Postgres instance comfortably. This number pushes you toward sharding (by user ID or conversation ID) or a NoSQL store with horizontal scaling from day one. It also tells you that archiving old messages to blob storage is not optional — it's a budget necessity.
+
+</details>
+
+---
+
+**Exercise 1.3 — Bandwidth**
+
+> A video streaming service has 10M concurrent viewers at peak.
+> Average stream quality is 4 Mbps.
+> What is the total egress bandwidth required?
+
+<details>
+<summary>Solution</summary>
+
+```
+10M viewers × 4 Mbps = 40,000,000 Mbps = 40 Tbps
+```
+
+**Design consequence:** No single data center produces 40 Tbps of egress. This single number proves that a CDN is not an optional optimization — it is the *only* viable delivery strategy. Your origin servers serve < 1% of traffic (cache misses). The entire design starts with the CDN as the primary serving layer, not an afterthought.
+
+</details>
+
+---
+
+**Exercise 1.4 — Cache sizing**
+
+> An e-commerce site has a product catalog of 50M products.
+> Each product record is 2 KB. The Pareto principle applies: 20% of products
+> receive 80% of traffic. Can the hot working set fit in a single Redis instance?
+
+<details>
+<summary>Solution</summary>
+
+```
+Full catalog: 50M × 2 KB = 100 GB
+Hot 20%:      100 GB × 20% = 20 GB
+```
+
+A standard Redis instance can hold 20–100 GB in RAM (depending on instance type). **20 GB fits in a single large Redis node**, but with no headroom. A Redis cluster with 3 shards gives comfortable capacity with room to grow.
+
+**Design consequence:** You now know the cache is viable (not too large to be impractical) and small enough that you don't need a complex distributed cache setup. You also know that if the catalog grows to 500M products, you'll need to rethink (hot set would be 200 GB). Document this as a scaling limit.
+
+</details>
+
+---
+
+**Exercise 1.5 — QPS to machine count**
+
+> A user authentication service handles login requests.
+> Peak load is 50,000 login requests/s. Each request takes ~20ms to handle
+> (bcrypt password hash). A single server can handle 50 concurrent requests.
+> How many servers do you need?
+
+<details>
+<summary>Solution</summary>
+
+```
+Each server: 50 concurrent × (1,000ms / 20ms) = 50 × 50 = 2,500 req/s
+Servers needed: 50,000 / 2,500 = 20 servers (+ headroom)
+With 50% safety margin: 30 servers
+```
+
+**Design consequence:** bcrypt is intentionally slow (that's the security point). 20ms per hash means one server can do far fewer auth ops than a typical API server. This tells you that auth is the limiting factor, not your database or network. It suggests either a dedicated auth compute tier, or using a managed identity provider (Auth0, Cognito) to offload this work entirely. The estimate surfaced a security-performance trade-off before you wrote a line of code.
+
+</details>
+
+---
+
+### Level 2 — Multi-Step Estimation (Interview-Style)
+
+These require combining multiple estimates the way you would in a real interview. The answer is less important than the reasoning chain.
+
+---
+
+**Exercise 2.1 — Design a Pastebin**
+
+> "Design Pastebin. Users can paste text; others can view it via a short URL."
+> Assumptions: 5M pastes created/day; 50M pastes viewed/day; average paste size = 10 KB.
+> Derive: writes/s, reads/s, storage after 5 years, and bandwidth.
+
+<details>
+<summary>Solution</summary>
+
+```
+Traffic:
+  Writes: 5M/day / 86,400 ≈ 58 writes/s
+  Reads:  50M/day / 86,400 ≈ 580 reads/s
+  Read:write ratio = 10:1
+
+Storage:
+  5M pastes/day × 10 KB = 50 GB/day
+  5 years = 50 GB × 365 × 5 = 91.25 TB
+
+Bandwidth:
+  Egress: 580 reads/s × 10 KB = 5.8 MB/s  ← very small
+  Ingress: 58 writes/s × 10 KB = 0.58 MB/s ← negligible
+```
+
+**What the numbers tell you:**
+
+| Number | Design implication |
+|--------|-------------------|
+| 58 writes/s | A single Postgres instance handles this trivially. No write scaling needed yet. |
+| 580 reads/s | Also trivially small. But add a cache anyway — hot pastes get millions of hits each. |
+| 91 TB over 5 years | Can't fit this in a database. Paste content goes in object storage (S3); DB stores only metadata (URL → S3 key). |
+| 5.8 MB/s egress | No CDN needed for scale — but a CDN is still useful for latency (edge caching hot pastes). |
+
+The key insight this estimate reveals: **Pastebin is a storage architecture problem, not a throughput problem.** The bottleneck is 91 TB of blob storage, not QPS. Your DB schema stores only metadata; content lives in object storage. Someone who skips the estimate might design a DB-only solution — and get surprised by storage costs and row size limits on large pastes.
+
+</details>
+
+---
+
+**Exercise 2.2 — Design a Ride-Sharing Location Service**
+
+> Drivers send GPS updates every 4 seconds. The platform has 5M active drivers during peak.
+> Each location update is 100 bytes. Derive: update ingestion rate, write bandwidth,
+> storage for 30 days of raw location data.
+
+<details>
+<summary>Solution</summary>
+
+```
+Update rate:
+  5M drivers × (1 update / 4s) = 1.25M updates/s
+
+Write bandwidth:
+  1.25M/s × 100 bytes = 125 MB/s ingress
+
+Storage (30-day raw):
+  125 MB/s × 86,400s/day × 30 days = 324 TB
+  (with 5× compression: ~65 TB)
+```
+
+**What the numbers tell you:**
+
+| Number | Design implication |
+|--------|-------------------|
+| 1.25M writes/s | Cannot go to a traditional SQL database. Postgres max: ~10K writes/s. Need a write-optimized time-series store (Cassandra, InfluxDB, Redis Streams) or a message queue in front. |
+| 125 MB/s ingress | Needs a high-throughput ingestion layer. Kafka is designed for exactly this: sustained 100s of MB/s. |
+| 324 TB raw (30d) | Raw storage is impractical. Don't store raw GPS for 30 days. Store only the last known position per driver in Redis (for matching), and downsample/aggregate for historical analytics. |
+
+The key design pivot: **you don't need to store all 1.25M updates/s permanently.** The matching system only needs the *current* location. Keep only current state in Redis (5M keys × 100 bytes = 500 MB — fits trivially in RAM). Write to durable storage only a downsampled version (every 60s per driver = 20× less data). This estimate makes the data lifecycle decision obvious: real-time state lives in Redis, historical analytics uses a downsampled time-series store.
+
+</details>
+
+---
+
+**Exercise 2.3 — Design a Notification System**
+
+> A social app sends push notifications for likes, comments, and follows.
+> 500M users. Each user receives 50 notifications/day on average.
+> Each notification: 1 KB. Derive: write throughput, read throughput (assuming
+> users check notifications 10×/day), and storage for 90 days.
+
+<details>
+<summary>Solution</summary>
+
+```
+Write throughput:
+  500M users × 50 notifications/day = 25B notifications/day
+  25B / 86,400 ≈ 289,000 writes/s
+
+Read throughput:
+  500M users × 10 checks/day = 5B reads/day
+  5B / 86,400 ≈ 58,000 reads/s
+
+Storage (90 days):
+  25B/day × 1 KB × 90 days = 2.25 PB
+```
+
+**What the numbers tell you:**
+
+| Number | Design implication |
+|--------|-------------------|
+| 289K writes/s | Blows past SQL. Cassandra (column-family, partitioned by user_id) is the standard choice here. Wide-row model naturally fits the "list of notifications per user" access pattern. |
+| 58K reads/s | Moderate. Add a per-user Redis cache for recent (last 20) notifications — this absorbs nearly all read traffic since most reads are "show me latest notifications." |
+| 2.25 PB over 90 days | Impractical to keep all in hot storage. **Tiered retention**: last 30 days in fast storage (Cassandra), 30–90 days in cold storage (S3 + Parquet). Older than 90 days: deleted. 2.25 PB drops to ~750 GB in hot tier. |
+
+The key insight: never store ALL notifications in your primary DB. The read pattern is almost always "last 20 notifications." Use a hot cache (Redis sorted set per user, max 100 items) for reads, write through to Cassandra as the source of truth. Now 58K reads/s hit Redis at < 1ms instead of Cassandra. The estimate forced a two-tier architecture that completely changes your data model.
+
+</details>
+
+---
+
+### Level 3 — Numbers That Break Naive Designs
+
+These exercises are specifically designed around miscalculations that lead interviews off track. Each one reveals a common trap.
+
+---
+
+**Exercise 3.1 — The Fanout Trap**
+
+> "Design Twitter. A celebrity user has 10M followers.
+> They post 10 tweets/day. If you do fan-out on write (pre-compute each
+> follower's timeline when a tweet is posted), how many timeline writes
+> does one celebrity generate per day? Per second at burst?"
+
+<details>
+<summary>Solution</summary>
+
+```
+Writes per tweet: 10M followers × 1 write = 10M writes
+Writes per day:   10M × 10 tweets = 100M writes/day just from one user
+
+Burst (assuming tweet processed in 10s):
+  10M writes / 10s = 1M writes/s burst per celebrity
+```
+
+**Why this breaks the naive design:** Most candidates propose "fan-out on write" because it makes reads fast (O(1) timeline lookup). This estimate reveals that a single celebrity generates a 1M write/s burst — more than many entire systems handle total. This is why Twitter has a hybrid model:
+
+```
+Users with < 1M followers  → fan-out on write (fast reads, manageable writes)
+Celebrities (> 1M)         → fan-out on read (inject tweets at query time)
+```
+
+Without this estimate, you design a system that melts every time a celebrity tweets. **The number proves the algorithm is wrong before you implement it.**
+
+</details>
+
+---
+
+**Exercise 3.2 — The Naive Caching Trap**
+
+> "Design YouTube search. There are 500M videos. You want to cache search results
+> to reduce database load. If you cache every unique query and there are
+> 10B unique search queries per day, how much cache storage do you need?
+> Average result set: 50 video IDs × 8 bytes each."
+
+<details>
+<summary>Solution</summary>
+
+```
+Result set size per query: 50 IDs × 8 bytes = 400 bytes
+Unique queries × result size: 10B × 400 bytes = 4 TB
+```
+
+**Why this breaks the naive design:** 4 TB of cache is not practical in RAM (extremely expensive). Caching all unique queries is wrong. The Pareto principle saves you:
+
+```
+Top 1% of queries (100M popular queries): receive 80% of traffic
+Cache size for top 1%: 100M × 400 bytes = 40 GB → fits in RAM ✅
+Cache hit rate: ~80% (covers most traffic)
+```
+
+**Design consequence:** Cache only popular queries (by frequency). Use a TTL of 1–5 minutes (search results change as new videos are uploaded). Implement an LRU eviction policy so popular queries stay warm. Your 4 TB problem becomes a 40 GB problem by targeting the right 1%. This changes your caching strategy from "cache everything" to "cache-aside with frequency-based admission."
+
+</details>
+
+---
+
+**Exercise 3.3 — The Hidden Bandwidth Cost**
+
+> "Design a real-time collaborative document editor (like Google Docs).
+> 10M concurrent users. Each user generates 10 keystrokes/second.
+> Each operation (keystroke + metadata): 100 bytes. What is the total
+> message bandwidth flowing through your servers?"
+
+<details>
+<summary>Solution</summary>
+
+```
+10M users × 10 ops/s × 100 bytes = 10 GB/s
+```
+
+**Why this breaks the naive design:** 10 GB/s is the sustained bandwidth of roughly 10 fully-saturated 10 GbE network interfaces. Most candidates design a single WebSocket broadcast server. At 10 GB/s, one server cannot receive all messages, let alone broadcast them.
+
+But wait — no one broadcasts to everyone. In Docs, broadcast scope is per-document:
+
+```
+Assume: 10M concurrent users, average document has 4 concurrent editors
+Broadcasts per document: 4 users × 10 ops/s × 100 bytes × 4 recipients = 16,000 bytes/s per document
+Number of concurrent documents: 10M / 4 = 2.5M documents
+
+Total broadcast bandwidth: same 10 GB/s, but now distributed across 2.5M document rooms
+```
+
+**Design consequence:** The insight is that you need *document-scoped* servers, not global broadcast servers. Each document's real-time collaboration is sharded to a specific server (Operational Transformation or CRDT server). Routing is by document_id (similar to how chat rooms work). This turns a 10 GB/s global problem into 2.5M small streams of ~4 KB/s each — trivially manageable when sharded correctly.
+
+</details>
+
+---
+
+**Exercise 3.4 — The Storage Growth Trap**
+
+> "Design a system to store all user activity logs for ML training.
+> 1B DAU × 500 events/day × 500 bytes/event. Calculate daily storage.
+> The ML team wants 3 years of data. What is the total storage?
+> What if you could compress 10:1?"
+
+<details>
+<summary>Solution</summary>
+
+```
+Daily:
+  1B × 500 events × 500 bytes = 250 TB/day
+
+3 years raw:
+  250 TB × 365 × 3 = 273.75 PB ≈ 274 PB
+
+With 10:1 compression:
+  274 PB / 10 = 27.4 PB
+```
+
+**What the numbers tell you:**
+
+274 PB raw is economically catastrophic. At cloud storage pricing (~$20/TB/month), that's **$5.5M/month** just for storage. With 10:1 compression: $548K/month — still extreme.
+
+This estimate forces three design decisions:
+
+1. **Tiered storage is mandatory:** Hot (last 30 days, fast SSD) → Warm (30–365 days, cheaper HDD/object) → Cold (1–3 years, glacier/tape). Cold tier is ~10× cheaper than hot.
+
+2. **Sampling over completeness:** ML models rarely need every keystroke. Sample 1-in-10 events (or use reservoir sampling) and get 90% of the training signal at 10% of the storage cost.
+
+3. **Schema and format matter enormously:** Storing 500 bytes/event as JSON vs Parquet (columnar, compressed) is often a 20:1 size difference. Parquet + Snappy compression turns 274 PB into ~14 PB. Now the budget is tractable.
+
+The estimate didn't give you an answer — it gave you three architectural constraints that the design must satisfy.
+
+</details>
+
+---
+
+### The Estimation → Design Connection (Cheat Sheet)
+
+> After any estimation, ask yourself these questions to translate numbers into decisions.
+
+| If your estimate shows... | Ask yourself... | Common design consequence |
+|---------------------------|-----------------|--------------------------|
+| Writes/s > 10K | Can my chosen DB handle this? | Likely need NoSQL, sharding, or a write queue (Kafka) |
+| Storage > 10 TB | Can this live in one place? | Object storage + metadata DB; tiered storage; sampling |
+| Bandwidth > 1 GB/s | Is one server enough? | CDN, sharding by content/region, edge caching |
+| Single user generating > 1% of total load | Celebrity/hotspot problem? | Hybrid algorithm (fan-out on write + read); rate limiting |
+| Cache size > available RAM | Is caching viable? | Cache only top 1–20% by frequency; TTL eviction |
+| Request latency × QPS exceeds server capacity | Server count is wrong | Calculate concurrent capacity; add servers or reduce latency |
+| 10× growth exceeds 2× infrastructure cost | Scaling is nonlinear | Identify which resource bottlenecks first; design the shard key now |
+
+---
+
+### Estimation Quick-Reference Cheat Sheet
+
+```
+Conversions (memorize these):
+  1M requests/day   →   ~12 req/s
+  10M requests/day  →  ~115 req/s
+  100M requests/day →  ~1,200 req/s
+  1B requests/day   → ~11,600 req/s
+
+  1 KB × 1M items = 1 GB
+  1 KB × 1B items = 1 TB
+  1 MB × 1M items = 1 PB
+
+Powers of 10 in bytes:
+  KB = 10^3   MB = 10^6   GB = 10^9   TB = 10^12   PB = 10^15
+
+Latency ladder (approximate):
+  L1 cache read       ~1 ns
+  L2 cache read       ~10 ns
+  RAM read            ~100 ns
+  SSD random read     ~0.1 ms
+  Network (same DC)   ~0.5 ms
+  Network (US→EU)     ~75 ms
+  HDD seek            ~10 ms
+
+Throughput rules of thumb:
+  Postgres writes:    ~10K/s (single primary)
+  Cassandra writes:   ~100K+/s per node
+  Kafka ingestion:    ~1M msgs/s per broker
+  Redis ops:          ~100K–1M ops/s
+  HTTP server (Go):   ~50K–200K req/s per core
+
+Common object sizes:
+  Tweet / short post  ~1 KB
+  User profile        ~1 KB
+  Email              ~50 KB
+  Photo (compressed) ~3 MB
+  Song (MP3)        ~3–5 MB
+  Video (1 min 1080p) ~100–500 MB
+```
+
+---
+
 ## Step 3 — High-Level Design
 
 Draw the system as a small number of boxes (5–8). This is your "napkin diagram." Don't go deep yet — establish the skeleton.
