@@ -291,3 +291,124 @@ Messages are stored in Cassandra partitioned by `(channel_id, bucket)` where `bu
 > **"Discord's 'typing indicator' broadcasts to all channel members when someone starts typing. At what member count does this become a denial-of-service vector, and how do you mitigate it?"**
 
 In a channel with 5,000 active members, if 100 users type simultaneously, each typing event fan-outs to 5,000 recipients = 500,000 WebSocket writes per typing event. Typing events repeat every 5 seconds while typing. This is a genuine DoS vector. Mitigations: (1) **Rate limit typing events** — accept at most 1 typing event per user per 5-second window per channel; discard the rest server-side. (2) **Cap recipients** — for channels above a member threshold (e.g., 500 active), stop broadcasting typing indicators entirely. The typing indicator is dropped from the UX. (3) **Aggregate** — instead of broadcasting per-user typing events, broadcast "N people are typing" from the server, collapsing N individual events into one aggregate push. The threshold for disabling typing indicators is a product decision, but the technical threshold where it becomes a performance concern is around 1,000 simultaneously active channel members.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/channels/{channel_id}/messages` send message.
+- `GET /v1/channels/{channel_id}/messages?cursor=...` fetch history.
+- `POST /v1/guilds/{guild_id}/members/{user_id}/roles` role updates.
+- `POST /v1/voice/sessions` create/join voice session.
+- `POST /v1/interactions` slash-command interaction ingress.
+
+### Reliability and consistency
+- Message sends are idempotent per client nonce.
+- Channel ordering guaranteed within shard partition.
+- Voice session control plane is region-local and retry-safe.
+
+### Security and limits
+- Guild/channel ACL enforcement on every action.
+- Per-guild and per-user message rate limits.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Guild`: server-level tenant boundary; key: `guild_id`.
+- `ChannelMessage`: immutable chat unit; key: `(channel_id, message_id)`.
+- `DeliveryState`: per-recipient state transitions (`sent`, `delivered`, `read`).
+- `Membership`: user-to-guild/channel roles and permissions.
+- `VoiceSession`: ephemeral voice participation state.
+
+### 2) Storage and indexing model
+- Partition writes by `channel_id` to preserve order.
+- Indexes:
+  - `idx_messages_by_channel(channel_id, server_seq)`
+  - `idx_receipts_by_message(message_id, recipient_id)`
+  - `idx_membership_by_user(user_id, guild_id)`
+- Cold history tier for long retention; hot cache for recent windows.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/channels/{channel_id}/messages` send message.
+- `GET /v1/channels/{channel_id}/messages?cursor=...` paginate history.
+- `POST /v1/messages/{message_id}/ack` delivery/read receipt updates.
+- `POST /v1/guilds/{guild_id}/members` add/remove member.
+- `GET /v1/channels/{channel_id}/presence` online/typing snapshot.
+- `POST /v1/media/upload_sessions` start media upload.
+- `POST /v1/channels/{channel_id}/mute` mute controls.
+- `GET /v1/sync?after_watermark=...` multi-guild catch-up.
+
+### 4) Contract examples
+Write contract: `POST /v1/channels/{channel_id}/messages`
+```json
+{
+  "client_nonce": "cli_abc_91",
+  "guild_id": "g_501",
+  "channel_id": "ch_88",
+  "sender_id": "u_17",
+  "body": "are we shipping today?",
+  "message_type": "text"
+}
+```
+```json
+{
+  "message_id": "m_9001",
+  "channel_id": "ch_88",
+  "server_seq": 771201,
+  "accepted": true,
+  "server_ts": "2026-05-13T19:20:00Z"
+}
+```
+List contract: `GET /v1/channels/{channel_id}/messages?cursor=771150&limit=2`
+```json
+{
+  "items": [{"message_id": "m_9000"}, {"message_id": "m_8999"}],
+  "next_cursor": "771149",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Strict dedupe key: `(sender_id, client_nonce)`.
+- Ordered delivery is guaranteed per channel partition.
+- Receipt updates are monotonic state transitions only.
+
+### 6) Error taxonomy
+- `409_DUPLICATE_CLIENT_MESSAGE_ID`
+- `403_MEMBERSHIP_REQUIRED`
+- `422_INVALID_MESSAGE_PAYLOAD`
+
+### 7) Security, quotas, and observability
+- Membership and role checks before send/read.
+- Quotas: per-user send QPS, per-channel burst cap, media upload bytes/day.
+- Metrics: `send_ack_latency_ms`, `queue_backlog`, `receipt_lag_ms`, `redelivery_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Gateway and app-integration events:
+  - `MESSAGE_CREATE`
+  - `MESSAGE_REACTION_ADD`
+  - `GUILD_MEMBER_ADD`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Signature-Ed25519`, `X-Signature-Timestamp`
+  - Body fields: `t` (event type), `s` (sequence), `d` (payload), `guild_id`
+- Reliability rules:
+  - At-least-once dispatch with reconnect replay support.
+  - Consumer dedupe by `(event_id or sequence)` per shard.
+
+Example `MESSAGE_CREATE` payload:
+```json
+{
+  "event_id": "evt_dc_88",
+  "t": "MESSAGE_CREATE",
+  "s": 912311,
+  "d": {
+    "guild_id": "g_501",
+    "channel_id": "ch_88",
+    "message_id": "m_9001",
+    "author_id": "u_17"
+  }
+}
+```

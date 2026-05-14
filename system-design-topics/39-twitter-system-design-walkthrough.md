@@ -291,3 +291,120 @@ Tweet created → Tweet Service writes to Postgres and publishes `tweet_created`
 > **"A user with 200M followers is permanently banned. How do you remove their tweets from 200M followers' cached timelines?"**
 
 You don't purge 200M caches — that's infractically slow and causes a write storm. Instead: (1) Set the user's account status to `banned` in the User Service (immediate). (2) Publish a `user_banned:{user_id}` event. (3) The Feed Service reads this event and adds the banned user to a "blocked accounts" list in Redis (a set, TTL-less). (4) At feed render time, the Feed Service filters out tweets from any user in the blocked list. This is a filter-on-read approach: the banned user's tweets remain in cached timelines but are filtered out before serving. The cache eventually expires and is rebuilt without the banned user's content (since new fan-outs for that user are stopped immediately). The banned user's tweets are purged from the search index asynchronously (a backfill job), from the Elasticsearch index segment by segment.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/tweets` create tweet.
+- `GET /v1/timeline/home?cursor=...` home timeline retrieval.
+- `POST /v1/tweets/{tweet_id}/retweet` retweet action.
+- `POST /v1/tweets/{tweet_id}/like` like/unlike idempotent toggle.
+- `GET /v1/users/{user_id}/tweets?cursor=...` user timeline.
+
+### Reliability and consistency
+- Tweet write path is idempotent and appends once to event log.
+- Fanout jobs are async with per-follower deduplication.
+- Timeline reads tolerate eventual consistency and partial degradation.
+
+### Security and limits
+- Anti-spam and anti-abuse checks before publish.
+- Endpoint-level quotas for write-heavy actions.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Tweet`: immutable authored content unit.
+- `MediaRef`: attachment list per post with canonical ordering.
+- `Engagement`: like/retweet/reply edges with actor identity.
+- `TimelineEntry`: materialized ranking candidate for a viewer's home timeline.
+- `FollowEdge`: directed social graph relation.
+
+### 2) Storage and indexing model
+- Post writes in OLTP by `post_id`; timeline materialization async.
+- Indexes:
+  - `idx_post_by_author(author_id, created_at desc)`
+  - `idx_engagement_by_post(post_id, created_at desc)`
+  - `idx_timeline_by_user(user_id, rank_bucket, created_at desc)`
+- Fanout queue dedupe key: `(post_id, follower_id)`.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/tweets` create tweet.
+- `GET /v1/tweets/{tweet_id}` detail fetch.
+- `GET /v1/feed/home?cursor=...` ranked timeline.
+- `POST /v1/tweets/{tweet_id}/like` idempotent toggle.
+- `POST /v1/tweets/{tweet_id}/retweet` retweet edge.
+- `POST /v1/tweets/{tweet_id}/reply` threaded reply write.
+- `GET /v1/users/{user_id}/tweets?cursor=...` author timeline.
+- `POST /v1/moderation/report` abuse signal ingest.
+
+### 4) Contract examples
+Write contract: `POST /v1/tweets`
+```json
+{
+  "author_id": "u_12",
+  "client_tweet_id": "ct_55",
+  "text": "launch day",
+  "media_ids": ["img_1"],
+  "visibility": "followers"
+}
+```
+```json
+{
+  "tweet_id": "tw_990",
+  "state": "published",
+  "fanout_enqueued": true,
+  "created_at": "2026-05-13T19:20:00Z"
+}
+```
+List contract: `GET /v1/feed/home?cursor=1715600400:p_990&limit=2`
+```json
+{
+  "items": [{"post_id": "p_990", "rank_score": 0.82}, {"post_id": "p_988", "rank_score": 0.80}],
+  "next_cursor": "1715600100:p_988",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Tweet create dedupe: `(author_id, client_tweet_id)`.
+- Like/repost endpoints are state transitions, not blind increments.
+- Feed eventually consistent; user timeline strongly consistent to author writes.
+
+### 6) Error taxonomy
+- `403_VISIBILITY_DENIED`
+- `409_DUPLICATE_CLIENT_POST_ID`
+- `422_POLICY_BLOCKED_CONTENT`
+
+### 7) Security, quotas, and observability
+- Privacy policy checks on read path.
+- Write abuse controls (per-user post, reply, like QPS).
+- Metrics: `fanout_enqueue_latency_ms`, `home_feed_p95_ms`, `publish_to_feed_delay_ms`.
+
+### 8) Webhook and event contracts (where applicable)
+- Events for integrators and internal consumers:
+  - `tweet.created`
+  - `tweet.deleted`
+  - `tweet.liked`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`, `X-Event-Timestamp`
+  - Body fields: `tweet_id`, `author_id`, `actor_id`, `conversation_id`, `event_ts`
+- Reliability rules:
+  - At-least-once delivery.
+  - Consumer dedupe key: `event_id`.
+  - Per-author ordering hint via `author_seq`.
+
+Example `tweet.created` payload:
+```json
+{
+  "event_id": "evt_tw_51",
+  "event_type": "tweet.created",
+  "tweet_id": "tw_990",
+  "author_id": "u_12",
+  "author_seq": 381,
+  "event_ts": "2026-05-13T20:10:00Z"
+}
+```

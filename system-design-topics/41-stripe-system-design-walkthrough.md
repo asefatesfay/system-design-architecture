@@ -318,3 +318,125 @@ Nightly reconciliation: Stripe downloads the settlement file from Visa/Mastercar
 > **"A merchant is processing $1M in fraudulent charges before your Radar system catches them. How does your system detect the anomaly and what automated actions does it take?"**
 
 Detection signals: (1) **Chargeback velocity** — fraud usually results in chargebacks 30–90 days later; but early signals include high refund rates on new card-country combinations. (2) **Radar score spike** — if the average fraud score across a merchant's recent transactions suddenly increases, the merchant's risk profile is flagged. (3) **Volume anomaly** — a merchant processing 10× their normal daily volume triggers a velocity alert. (4) **Card BIN concentration** — if 80% of charges use cards from the same BIN (common in carding attacks), it's flagged. Automated actions: (1) Place the merchant's account under enhanced review (block payouts). (2) Require 3D Secure on all new charges. (3) Alert Stripe's risk team for manual review. (4) If fraud is confirmed, freeze the account and initiate clawback of funds still in Stripe's possession. Funds already paid out to the merchant are pursued as a debt — Stripe holds merchants liable for fraud losses under their Terms of Service.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/payment_intents` create payment intent.
+- `POST /v1/payment_intents/{id}/confirm` confirm authorization/capture path.
+- `POST /v1/refunds` create refund.
+- `GET /v1/charges/{id}` charge retrieval.
+- `POST /v1/webhooks/{endpoint_id}/replay` replay failed events.
+
+### Reliability and consistency
+- Mandatory idempotency keys on mutating endpoints.
+- ACID write boundaries for payment + ledger mutation.
+- Webhooks delivered at-least-once with signed payloads and retries.
+
+### Security and limits
+- Strong auth scopes per merchant account/connected account.
+- Fraud/risk checks and velocity limits before confirmation.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `PaymentIntent`: customer authorization/capture orchestration resource.
+- `Charge`: processor-network attempt outcome.
+- `Refund`: partial/full reversal record.
+- `LedgerEntry`: immutable accounting row for balance correctness.
+- `WebhookDelivery`: outbound event with retry state.
+
+### 2) Storage and indexing model
+- Strongly consistent OLTP for payment + ledger boundaries.
+- Indexes:
+  - `idx_pi_by_merchant(merchant_id, created_at desc)`
+  - `idx_charge_by_pi(pi_id, created_at desc)`
+  - `idx_ledger_by_account(account_id, created_at desc)`
+- Webhook outbox pattern for reliable delivery.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/payment_intents` create intent.
+- `POST /v1/payment_intents/{id}/confirm` confirm payment.
+- `POST /v1/payment_intents/{id}/capture` delayed capture.
+- `POST /v1/refunds` issue refund.
+- `GET /v1/charges/{id}` fetch charge details.
+- `GET /v1/balance_transactions?cursor=...` ledger view.
+- `POST /v1/webhooks/{endpoint_id}/replay` replay events.
+- `GET /v1/disputes/{id}` dispute lifecycle.
+
+### 4) Contract examples
+Write contract: `POST /v1/payment_intents/{id}/confirm`
+```json
+{
+  "idempotency_key": "ik_7788",
+  "payment_method_id": "pm_11",
+  "capture_method": "automatic"
+}
+```
+```json
+{
+  "payment_intent_id": "pi_600",
+  "charge_id": "ch_122",
+  "state": "succeeded",
+  "authorized_amount": 5000,
+  "currency": "USD"
+}
+```
+Read contract: `GET /v1/charges/{id}`
+```json
+{
+  "charge_id": "ch_122",
+  "state": "succeeded",
+  "amount": 5000,
+  "network": "visa"
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- All mutating endpoints require idempotency keys.
+- Ledger writes and payment state transitions share ACID boundary.
+- Webhooks are at-least-once; clients dedupe by event ID.
+
+### 6) Error taxonomy
+- `409_IDEMPOTENCY_KEY_IN_USE`
+- `402_CARD_DECLINED`
+- `422_REQUIRES_ACTION`
+
+### 7) Security, quotas, and observability
+- Strong merchant/account scopes and PCI controls.
+- Velocity limits and risk scoring gates on confirmations.
+- Metrics: `auth_success_rate`, `confirm_p95_ms`, `duplicate_key_rate`, `webhook_retry_depth`.
+
+### 8) Webhook and event contracts (where applicable)
+- External merchant events:
+  - `payment_intent.succeeded`
+  - `charge.refunded`
+  - `payment_intent.payment_failed`
+- Delivery contract:
+  - Headers: `Stripe-Signature`, `X-Event-Id`, `X-Request-Id`
+  - Body fields: `id`, `type`, `created`, `data.object`, `api_version`
+- Reliability rules:
+  - At-least-once delivery with exponential backoff.
+  - Merchant must dedupe by `event.id`.
+  - Replay endpoint should preserve original `event.id`.
+
+Example `payment_intent.succeeded` payload:
+```json
+{
+  "id": "evt_1",
+  "type": "payment_intent.succeeded",
+  "created": 1778700000,
+  "data": {
+    "object": {
+      "id": "pi_600",
+      "amount": 5000,
+      "currency": "usd",
+      "status": "succeeded"
+    }
+  }
+}
+```

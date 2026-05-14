@@ -298,3 +298,94 @@ Each title has multiple thumbnail variants stored in S3 and served via CDN. The 
 > **"A new episode drops at midnight. 20 million users hit play simultaneously. Walk me through every bottleneck."**
 
 Request path: Client → CDN (auth token check) → API Gateway → Playback Service (fetch manifest + DRM license) → DRM License Server → CDN (video segments). Bottlenecks in order: (1) **DRM License Server** — this is the only non-CDN step per play. 20M license requests/minute = ~333K/second. License servers must be pre-scaled horizontally before the drop, with license results cached per user per title for the session duration. (2) **Playback Service** — fetches streaming manifest (which CDN URL to use, which bitrate ladder). This can be cached at the CDN edge with a short TTL (5 minutes), collapsing 20M requests to a few thousand cache fills. (3) **CDN origin** — the first few thousand requests for the new episode's video segments are cache misses. Netflix pre-positions content on Open Connect appliances (ISP-embedded CDN boxes) before large drops, so the ISP-level cache is warm before midnight. (4) **Client adaptive bitrate** — 20M simultaneous streams may saturate specific CDN edge nodes; ABR logic on clients will automatically step down bitrate if bandwidth is constrained, distributing load across lower-quality segments on different CDN nodes.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `GET /v1/home?profile_id=...` home rails and personalized rows.
+- `GET /v1/titles/{title_id}` title metadata and playback eligibility.
+- `POST /v1/playback/tokens` issue DRM/playback token.
+- `POST /v1/events/view` ingest play/start/stop events.
+- `GET /v1/search?q=...&cursor=...` catalog search.
+
+### Reliability and consistency
+- Playback token issuance is low-latency and strictly authenticated.
+- View event ingestion is async with exactly-once-like dedupe by event ID.
+- Home APIs return partial rails on dependency timeout (graceful degradation).
+
+### Security and limits
+- Device and entitlement checks before playback token minting.
+- Aggressive abuse/rate controls on token endpoints.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Title`: logical video/episode resource with lifecycle state.
+- `AssetVariant`: transcoded renditions by codec/bitrate/resolution.
+- `PlaybackPolicy`: entitlement and geo/device policy snapshot.
+- `PlaybackSession`: tokenized session for manifest and segment access.
+- `ViewEvent`: play/pause/seek telemetry for personalization and billing.
+
+### 2) Storage and indexing model
+- Metadata in OLTP store keyed by `title_id`; media in object storage/CDN.
+- Indexes:
+  - `idx_title_by_owner(owner_id, created_at desc)`
+  - `idx_variant_by_title(title_id, bitrate)`
+  - `idx_view_event_by_user(user_id, ts desc)`
+- Processing state machine persisted: `uploaded -> processing -> ready -> failed`.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/titles` create upload session.
+- `PUT /v1/uploads/{upload_id}/parts/{part_no}` resumable upload.
+- `POST /v1/titles/{title_id}/publish` finalize and trigger processing.
+- `GET /v1/titles/{title_id}` metadata + processing state.
+- `POST /v1/playback/tokens` mint playback token.
+- `GET /v1/playback/manifests/{session_id}` fetch HLS/DASH manifest.
+- `POST /v1/events/view` ingest telemetry.
+- `GET /v1/feed/home?cursor=...` personalized rows.
+
+### 4) Contract examples
+Write contract: `POST /v1/playback/tokens`
+```json
+{
+  "title_id": "vid_301",
+  "user_id": "u_44",
+  "device_id": "dev_7",
+  "profile_id": "p_main"
+}
+```
+```json
+{
+  "session_id": "ps_88",
+  "playback_token": "tok_xxx",
+  "manifest_url": "https://cdn.example.com/m/vid_301.m3u8",
+  "expires_at": "2026-05-13T19:30:00Z"
+}
+```
+Read contract: `GET /v1/titles/{title_id}`
+```json
+{
+  "title_id": "vid_301",
+  "state": "ready",
+  "variants": [{"codec": "h264", "bitrate": 3000000, "resolution": "1080p"}]
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- `publish` idempotent by `(title_id, client_publish_id)`.
+- Playback token mint can return existing active session for same tuple.
+- Processing state changes monotonic and auditable.
+
+### 6) Error taxonomy
+- `403_ENTITLEMENT_DENIED`
+- `409_TITLE_NOT_READY`
+- `429_PLAYBACK_TOKEN_RATE_LIMIT`
+
+### 7) Security, quotas, and observability
+- Entitlement + geo checks before token issuance.
+- Signed URLs and short token TTLs.
+- Metrics: `token_issue_latency_ms`, `startup_time_ms`, `rebuffer_ratio`, `drm_error_rate`.

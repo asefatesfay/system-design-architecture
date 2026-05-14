@@ -306,3 +306,122 @@ When the host's connection drops, the SFU detects the missing ICE keep-alive wit
 > **"Zoom recordings must be available globally. A US meeting was recorded in the US data center but the downloader is in Singapore. Walk me through storage and delivery."**
 
 Raw recording chunks are written to S3 in us-east-1 during the meeting. Post-processing (concatenation, final encode) runs in the same region — 5–15 minutes after meeting end. The final MP4 is stored in S3 us-east-1 as the origin. When the Singapore user requests the download: (1) The download link is a signed CloudFront (CDN) URL, not a direct S3 URL. (2) CloudFront routes the request to the nearest edge PoP (Singapore CloudFront edge). (3) On first request, CloudFront edge fetches from S3 us-east-1 origin (a one-time origin pull, ~150ms latency from Singapore to US east). (4) The edge caches the recording. Subsequent downloaders from the same region get the cached copy at local CDN speeds. (5) For very large recordings (> 1GB), the download is served as HTTP range requests, allowing the user to resume interrupted downloads without restarting. The signed URL includes an expiry (typically 24 hours) to prevent unauthorized sharing of the download link.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/meetings` create meeting session.
+- `POST /v1/meetings/{id}/join_tokens` issue participant token.
+- `POST /v1/meetings/{id}/events` participant lifecycle updates.
+- `POST /v1/recordings` finalize recording metadata.
+- `GET /v1/meetings/{id}/qos` quality diagnostics.
+
+### Reliability and consistency
+- Join token issuance is idempotent and short-lived.
+- Meeting events are appended with monotonic sequence IDs.
+- Recording pipeline is async with retriable finalization.
+
+### Security and limits
+- Host/co-host role checks and waiting-room policy enforcement.
+- Abuse controls for join attempts and token minting.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Meeting`: scheduled/live session with policy.
+- `Participant`: join state, role, and device/network metadata.
+- `MediaSession`: SFU-level media routing context.
+- `Recording`: post-call artifact metadata and lifecycle.
+- `QoSReport`: aggregated quality telemetry.
+
+### 2) Storage and indexing model
+- Meeting metadata in OLTP, media plane state in low-latency stores.
+- Indexes:
+  - `idx_meeting_by_host(host_id, start_at desc)`
+  - `idx_participant_by_meeting(meeting_id, joined_at)`
+  - `idx_recording_by_meeting(meeting_id, created_at)`
+- Event log for participant lifecycle replay and audit.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/meetings` create meeting.
+- `POST /v1/meetings/{id}/join_tokens` mint participant token.
+- `POST /v1/meetings/{id}/events` participant lifecycle event.
+- `GET /v1/meetings/{id}` meeting state.
+- `POST /v1/recordings` recording finalize metadata.
+- `GET /v1/recordings/{id}/download` signed recording URL.
+- `GET /v1/meetings/{id}/qos` diagnostics summary.
+- `POST /v1/meetings/{id}/end` host-initiated end.
+
+### 4) Contract examples
+Write contract: `POST /v1/meetings`
+```json
+{
+  "host_id": "u_91",
+  "topic": "weekly sync",
+  "start_at": "2026-05-14T16:00:00Z",
+  "settings": {"waiting_room": true, "passcode": "8452"}
+}
+```
+```json
+{
+  "meeting_id": "mt_451",
+  "state": "scheduled",
+  "join_url": "https://example.com/j/mt_451",
+  "created_at": "2026-05-13T19:20:00Z"
+}
+```
+Read contract: `GET /v1/meetings/{id}/qos`
+```json
+{
+  "meeting_id": "mt_451",
+  "packet_loss_pct": 1.2,
+  "avg_rtt_ms": 84,
+  "degraded_participants": 3
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Create dedupe by `(host_id, client_request_id)`.
+- Meeting state machine enforced for start/end/record transitions.
+- Join token issuance idempotent for active participant window.
+
+### 6) Error taxonomy
+- `403_WAITING_ROOM_REQUIRED`
+- `409_MEETING_ALREADY_ENDED`
+- `422_INVALID_PARTICIPANT_ROLE`
+
+### 7) Security, quotas, and observability
+- Role checks (`host`, `cohost`, `participant`) on control APIs.
+- Join token and meeting creation rate limits.
+- Metrics: `join_time_ms`, `media_connect_success_rate`, `recording_ready_latency_ms`.
+
+### 8) Webhook and event contracts (where applicable)
+- Account-level callbacks:
+  - `meeting.started`
+  - `meeting.ended`
+  - `recording.completed`
+- Delivery contract:
+  - Headers: `X-Zm-Signature`, `X-Event-Id`, `X-Event-Timestamp`
+  - Body fields: `event`, `payload.object.id`, `payload.object.host_id`, `payload.object.start_time`
+- Reliability rules:
+  - At-least-once retries on timeout/`5xx`.
+  - Receiver dedupe by `event_id`.
+
+Example `recording.completed` payload:
+```json
+{
+  "event_id": "evt_zoom_4",
+  "event": "recording.completed",
+  "payload": {
+    "object": {
+      "id": "mt_451",
+      "host_id": "u_91",
+      "recording_files": [{"id": "rec_77", "status": "completed"}]
+    }
+  }
+}
+```

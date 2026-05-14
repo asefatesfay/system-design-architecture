@@ -449,3 +449,119 @@ as the substrate, and focus your custom logic on the LLM + tool layer.
 - **Agent evaluation:** how to measure agent correctness, regression testing for new model versions.
 - **Cost management:** per-run budget caps; abort runs that exceed token/cost thresholds.
 - **Observability:** distributed tracing across LLM calls, tool calls, checkpoints — essential for debugging long, complex runs.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/agents` create agent configuration.
+- `POST /v1/threads` create conversation thread.
+- `POST /v1/threads/{thread_id}/runs` execute agent run.
+- `GET /v1/runs/{run_id}` run status and step trace.
+- `POST /v1/tools/invocations` tool execution callback endpoint.
+
+### Reliability and consistency
+- Runs are idempotent by `(thread_id, client_run_id)`.
+- Long-running runs use async operation resource and resumable polling.
+- Tool calls are signed and replay-protected.
+
+### Security and limits
+- Tool allowlists and per-agent permission scopes.
+- Strict budget/rate limits for model and tool invocation paths.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Agent`: instruction set, model routing, and tool policy.
+- `Thread`: conversation context container.
+- `Run`: execution instance with step-by-step state.
+- `ToolInvocation`: tool call metadata and result.
+- `Checkpoint`: resumable intermediate execution state.
+
+### 2) Storage and indexing model
+- Persistent thread/run state in OLTP with append-only run events.
+- Indexes:
+  - `idx_runs_by_thread(thread_id, created_at desc)`
+  - `idx_invocations_by_run(run_id, step_no)`
+  - `idx_checkpoints_by_run(run_id, created_at desc)`
+- Queue scheduler for fair run execution under burst.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/agents` create/update agent config.
+- `POST /v1/threads` create thread.
+- `POST /v1/threads/{thread_id}/runs` start run.
+- `GET /v1/runs/{run_id}` run status.
+- `GET /v1/runs/{run_id}/steps?cursor=...` execution trace.
+- `POST /v1/tools/invocations` external tool callback.
+- `POST /v1/runs/{run_id}/cancel` cancel run.
+- `POST /v1/runs/{run_id}/resume` resume from checkpoint.
+
+### 4) Contract examples
+Write contract: `POST /v1/threads/{thread_id}/runs`
+```json
+{
+  "client_run_id": "run_cli_31",
+  "input": "draft an architecture summary",
+  "max_steps": 12
+}
+```
+```json
+{
+  "run_id": "run_104",
+  "thread_id": "th_77",
+  "state": "queued",
+  "poll_url": "/v1/runs/run_104"
+}
+```
+Read contract: `GET /v1/runs/{run_id}`
+```json
+{
+  "run_id": "run_104",
+  "state": "running",
+  "step_count": 3,
+  "last_checkpoint_id": "ck_11"
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Deduplicate run start by `(thread_id, client_run_id)`.
+- Tool invocations replay-protected with invocation IDs and signatures.
+- Run state transitions enforced (`queued -> running -> completed/failed/cancelled`).
+
+### 6) Error taxonomy
+- `409_RUN_ALREADY_TERMINAL`
+- `422_TOOL_OUTPUT_SCHEMA_INVALID`
+- `429_RUN_QUOTA_EXCEEDED`
+
+### 7) Security, quotas, and observability
+- Tool allowlists and sandbox boundaries per agent.
+- Per-tenant caps on concurrent runs and tool calls.
+- Metrics: `run_latency_ms`, `tool_error_rate`, `checkpoint_restore_latency_ms`, `token_cost_per_run`.
+
+### 8) Webhook and event contracts (where applicable)
+- Async run lifecycle callbacks:
+  - `run.completed`
+  - `run.failed`
+  - `run.requires_tool_output`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`
+  - Body fields: `run_id`, `thread_id`, `state`, `step_count`, `error`, `event_ts`
+- Reliability rules:
+  - At-least-once delivery; consumers dedupe on `event_id`.
+  - Tool callback endpoint must include `invocation_id` and be idempotent.
+
+Example `run.completed` payload:
+```json
+{
+  "event_id": "evt_run_31",
+  "event_type": "run.completed",
+  "run_id": "run_104",
+  "thread_id": "th_77",
+  "state": "completed",
+  "step_count": 9,
+  "event_ts": "2026-05-13T20:00:00Z"
+}
+```

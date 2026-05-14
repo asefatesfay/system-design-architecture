@@ -316,3 +316,122 @@ Supply (drivers) and demand (riders) per geohash cell are maintained in Redis as
 > **"A rider cancels 30 seconds after matching. The driver has already started driving. Who pays the cancellation fee, and how does your system ensure exactly-once charging?"**
 
 Business logic: if cancellation is within a grace period (typically 2 minutes) AND the driver has not yet moved beyond a threshold distance, the rider is not charged. If outside grace period or driver has started moving, the cancellation fee applies. Implementation: the Cancellation Service reads the match timestamp and driver's current GPS position (most recent, from Redis). If `now - match_time > grace_period` OR `driver_distance_traveled > threshold`, it triggers a charge via the Payment Service with an idempotency key: `cancel_charge:{trip_id}`. The idempotency key ensures that if the Cancellation Service retries (on timeout), the Payment Service recognizes the duplicate and returns the original charge result without double-charging. The charge result is written to the Trip record atomically with the cancellation status update — both in the same Postgres transaction.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/rides/requests` create ride request.
+- `GET /v1/rides/{ride_id}` ride state machine status.
+- `POST /v1/rides/{ride_id}/events` driver/rider lifecycle updates.
+- `POST /v1/dispatch/match` internal dispatch matching call.
+- `POST /v1/payments/authorize` fare authorization.
+
+### Reliability and consistency
+- Ride creation requires idempotency key per client request.
+- Ride state updates enforce valid transition rules.
+- Dispatch retries are bounded and deduped by request token.
+
+### Security and limits
+- Region-scoped authorization and PII redaction.
+- Burst limits around dispatch and ETA queries.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `RideRequest`: rider intent and pickup/dropoff payload.
+- `DriverAssignment`: dispatch match with score and timeout.
+- `Trip`: lifecycle state machine from accept to complete.
+- `FareQuote`: pricing snapshot with expiry and assumptions.
+- `TripEvent`: auditable timeline of status/location/charges.
+
+### 2) Storage and indexing model
+- Geospatial index for nearby drivers by geohash cell.
+- OLTP indexes:
+  - `idx_trip_by_rider(rider_id, requested_at desc)`
+  - `idx_trip_by_driver(driver_id, state, updated_at)`
+  - `idx_events_by_trip(trip_id, ts)`
+- Dispatch candidate cache in Redis keyed by cell.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/rides/requests` create ride request.
+- `GET /v1/rides/{ride_id}` lifecycle status.
+- `POST /v1/rides/{ride_id}/events` rider/driver event.
+- `POST /v1/dispatch/match` internal assignment.
+- `POST /v1/rides/{ride_id}/cancel` cancellation flow.
+- `POST /v1/fares/quote` quote calculation.
+- `POST /v1/payments/authorize` hold authorization.
+- `POST /v1/payments/capture` capture on completion.
+
+### 4) Contract examples
+Write contract: `POST /v1/rides/requests`
+```json
+{
+  "client_request_id": "rq_901",
+  "rider_id": "r_1",
+  "pickup": {"lat": 47.61, "lng": -122.33},
+  "dropoff": {"lat": 47.64, "lng": -122.12},
+  "product": "uberx"
+}
+```
+```json
+{
+  "ride_id": "ride_554",
+  "state": "searching_driver",
+  "eta_sec": 260,
+  "created_at": "2026-05-13T19:20:00Z"
+}
+```
+Read contract: `GET /v1/rides/{ride_id}`
+```json
+{
+  "ride_id": "ride_554",
+  "state": "matched",
+  "driver_id": "d_77",
+  "vehicle": {"plate": "ABC123"}
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Ride creation dedupe by `(rider_id, client_request_id)`.
+- State transitions validated as finite-state machine.
+- Dispatch retries bounded and deduped by match token.
+
+### 6) Error taxonomy
+- `409_INVALID_STATE_TRANSITION`
+- `422_NO_DRIVERS_AVAILABLE`
+- `402_PAYMENT_AUTH_REQUIRED`
+
+### 7) Security, quotas, and observability
+- Region and product entitlement checks.
+- QPS caps on request/quote endpoints to protect dispatch.
+- Metrics: `match_time_ms`, `cancel_after_match_rate`, `eta_error_ms`, `trip_state_stall_count`.
+
+### 8) Webhook and event contracts (where applicable)
+- Partner and marketplace callbacks:
+  - `trip.completed`
+  - `trip.cancelled`
+  - `payment.captured`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Signature`, `X-Trip-Region`
+  - Body fields: `ride_id`, `rider_id`, `driver_id`, `state`, `fare`, `currency`, `event_ts`
+- Reliability rules:
+  - At-least-once delivery.
+  - Receiver dedupe on `event_id`.
+  - Events ordered per `ride_id` using `trip_event_seq`.
+
+Example `trip.completed` payload:
+```json
+{
+  "event_id": "evt_trip_88",
+  "event_type": "trip.completed",
+  "ride_id": "ride_554",
+  "trip_event_seq": 19,
+  "fare": 2345,
+  "currency": "USD",
+  "event_ts": "2026-05-13T19:45:00Z"
+}
+```

@@ -643,3 +643,93 @@ OT transformation is O(n) per operation where n is the number of concurrent unac
 > **"How do you prevent a malicious editor from injecting invisible characters or encoding exploits into a shared document?"**
 
 Operations must be validated server-side before being applied and broadcast. Validation includes: operation schema conformance (valid OT operation structure), character allowlist/denylist (no null bytes, RTL override characters, or oversized payloads), content sanitization before HTML rendering in the client (the document's JSON representation must be serialized through a safe renderer). The server is the trust boundary — clients are untrusted. An operation that passes OT transformation but contains malicious content must be rejected at the validation layer before being stored or broadcast.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/documents` create document.
+- `GET /v1/documents/{doc_id}` fetch metadata + revision pointer.
+- `POST /v1/documents/{doc_id}/operations` append edit operations.
+- `GET /v1/documents/{doc_id}/operations?cursor=...` stream missed ops.
+- `POST /v1/documents/{doc_id}/comments` create comments/threads.
+
+### Reliability and consistency
+- Operation IDs and revision checks enforce idempotent retry safety.
+- Server assigns monotonic op sequence per document partition.
+- Snapshot + operation log support fast recovery and catch-up.
+
+### Security and limits
+- Share policy and role checks (`owner/editor/viewer`) per endpoint.
+- Per-document write throttles protect collaborative sessions.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Document`: root text object; key: `doc_id`; owner and ACL policy.
+- `Revision`: immutable checkpoint; key: `(doc_id, revision_id)`.
+- `Operation`: OT mutation units; key: `(doc_id, op_id)`.
+- `CommentThread`: anchored discussion; key: `thread_id`.
+- `CollaboratorSession`: editor presence and cursor metadata.
+
+### 2) Storage and indexing model
+- Write path append log partitioned by `doc_id`.
+- Indexes:
+  - `idx_revision_by_doc(doc_id, revision_id desc)`
+  - `idx_ops_by_doc_seq(doc_id, server_seq)`
+  - `idx_comments_by_doc_anchor(doc_id, anchor_start, anchor_end)`
+- Periodic snapshots avoid full-log replay on open.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/documents` create.
+- `GET /v1/documents/{doc_id}` metadata + head revision.
+- `POST /v1/documents/{doc_id}/operations` submit OT batch.
+- `GET /v1/documents/{doc_id}/operations?after_seq=...` incremental sync.
+- `POST /v1/documents/{doc_id}/comments` create thread.
+- `PATCH /v1/documents/{doc_id}/acl` share permissions.
+- `GET /v1/documents/{doc_id}/revisions?cursor=...` history list.
+- `POST /v1/documents/{doc_id}/restore` restore revision.
+
+### 4) Contract examples
+Write contract: `POST /v1/documents/{doc_id}/operations`
+```json
+{
+  "client_batch_id": "opb_7001",
+  "base_revision": 812,
+  "ops": [{"op_id": "op_41", "type": "insert_text", "index": 220, "text": " design review"}]
+}
+```
+```json
+{
+  "accepted": true,
+  "new_revision": 813,
+  "transforms_applied": 2,
+  "ack_op_ids": ["op_41"]
+}
+```
+Read contract: `GET /v1/documents/{doc_id}/revisions?cursor=rev_810&limit=2`
+```json
+{
+  "items": [{"revision_id": 812}, {"revision_id": 811}],
+  "next_cursor": "rev_811",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Deduplicate by `(doc_id, client_batch_id)`.
+- Return `409_VERSION_CONFLICT` when `base_revision` stale.
+- Strong order per-document, eventual propagation for remote collaborators.
+
+### 6) Error taxonomy
+- `409_VERSION_CONFLICT`
+- `422_INVALID_OT_OPERATION`
+- `403_PERMISSION_DENIED`
+
+### 7) Security, quotas, and observability
+- Role-based controls (`owner`, `editor`, `viewer`, `commenter`).
+- Editor write throttles and comment abuse limits.
+- Must track: `transform_latency_ms`, `ops_per_doc_sec`, `stale_base_rate`, `cursor_lag_ms`.

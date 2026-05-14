@@ -279,3 +279,93 @@ License revocation must propagate within seconds. Steps: (1) Mark the track as `
 > **"You have 100M tracks. For any song, you need to find acoustically similar songs in < 100ms for radio/autoplay. How?"**
 
 Acoustic similarity is computed offline, not at query time. The pipeline: extract audio features from every track (tempo, key, timbre, loudness — using signal processing or a pretrained audio embedding model), then represent each track as a dense vector in a high-dimensional space. Store these vectors in an approximate nearest-neighbor (ANN) index (e.g., FAISS, ScaNN, or Pinecone). At query time, look up the current track's vector and return the K nearest neighbors — this is a vector search, not a full scan, taking < 100ms even at 100M vectors. The ANN index is built offline (weekly) and served from memory on dedicated ANN servers. The pre-computed neighbor lists for popular tracks can also be cached in Redis for the most common "similar to X" queries, reducing query time to sub-millisecond.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `GET /v1/playlists/{playlist_id}` playlist metadata.
+- `POST /v1/playlists/{playlist_id}/tracks` append tracks in order.
+- `GET /v1/recommendations?seed_tracks=...` recommendation retrieval.
+- `POST /v1/playback/sessions` create playback session token/context.
+- `POST /v1/events/listen` ingest listening telemetry.
+
+### Reliability and consistency
+- Playlist mutation requests carry version for conflict detection.
+- Telemetry ingestion is buffered/async and idempotent by event ID.
+- Playback session state is ephemeral and region-affine.
+
+### Security and limits
+- Token scope enforcement (`playlist-write`, `streaming`).
+- Rate limits for recommendation and telemetry endpoints.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Track`: canonical audio item metadata.
+- `Playlist`: ordered mutable collection owned by user/team.
+- `PlaylistTrack`: join entity with position and add metadata.
+- `PlaybackSession`: active stream context by device/profile.
+- `ListenEvent`: immutable telemetry for recommendations/royalties.
+
+### 2) Storage and indexing model
+- Playlist OLTP writes with optimistic versioning.
+- Indexes:
+  - `idx_playlist_by_owner(owner_id, updated_at desc)`
+  - `idx_playlist_track(playlist_id, position)`
+  - `idx_listen_event(user_id, ts desc)`
+- Recommendation candidate caches in memory tier.
+
+### 3) Endpoint matrix (comprehensive)
+- `GET /v1/playlists/{playlist_id}` playlist detail.
+- `POST /v1/playlists/{playlist_id}/tracks` append tracks.
+- `PATCH /v1/playlists/{playlist_id}/tracks/reorder` reorder items.
+- `DELETE /v1/playlists/{playlist_id}/tracks/{position}` remove item.
+- `POST /v1/playback/sessions` create stream session.
+- `POST /v1/playback/sessions/{id}/heartbeat` progress updates.
+- `GET /v1/recommendations?seed_tracks=...` recommendations.
+- `POST /v1/events/listen` telemetry ingestion.
+
+### 4) Contract examples
+Write contract: `POST /v1/playlists/{playlist_id}/tracks`
+```json
+{
+  "client_request_id": "req_55",
+  "expected_version": 14,
+  "tracks": ["trk_11", "trk_77"]
+}
+```
+```json
+{
+  "playlist_id": "pl_22",
+  "accepted": true,
+  "new_version": 15,
+  "added_count": 2
+}
+```
+Read contract: `GET /v1/playlists/{playlist_id}`
+```json
+{
+  "playlist_id": "pl_22",
+  "version": 15,
+  "tracks": [{"position": 1, "track_id": "trk_11"}]
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Mutations dedupe by `client_request_id`.
+- Version conflicts return `409` with latest version.
+- Playback session writes are eventually persisted but strongly ordered per session.
+
+### 6) Error taxonomy
+- `409_PLAYLIST_VERSION_CONFLICT`
+- `403_SUBSCRIPTION_REQUIRED`
+- `422_TRACK_NOT_AVAILABLE_IN_REGION`
+
+### 7) Security, quotas, and observability
+- Scope checks: `playlist-write`, `streaming`, `library-read`.
+- Rate limits on recommendation and playback session endpoints.
+- Metrics: `playlist_write_p95_ms`, `stream_startup_ms`, `listen_ingest_lag_ms`.

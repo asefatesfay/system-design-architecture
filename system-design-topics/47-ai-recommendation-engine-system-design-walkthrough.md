@@ -92,7 +92,7 @@ graph TD
     Client["User App Request"]
     GW["API Gateway"]
     RecSvc["Recommendation Service\n(orchestrates pipeline)"]
-    
+
     subgraph Stage1["Stage 1: Candidate Generation (~50ms)"]
         EmbLookup["User Embedding Lookup\n(Redis / Memcached)"]
         ANN["ANN Index\n(vector similarity search)"]
@@ -375,3 +375,122 @@ Autoregressive retrieval (e.g., TIGER, generative recommenders):
 - **Causal ML for debiasing:** popularity bias, position bias correction in training labels.
 - **Cross-domain recommendations:** using activity on one surface to inform another (e.g., search history → homepage).
 - **Privacy:** differential privacy in training, federated learning for on-device personalization.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `GET /v1/recommendations?user_id=...` online serving endpoint.
+- `POST /v1/events` user interaction event ingestion.
+- `POST /v1/features/snapshots` feature materialization triggers.
+- `GET /v1/models/{model_id}/metrics` model health and quality.
+- `POST /v1/experiments/assign` treatment assignment.
+
+### Reliability and consistency
+- Event ingestion is idempotent by event UUID.
+- Recommendation serving degrades gracefully to fallback models.
+- Feature freshness contracts are explicit in response metadata.
+
+### Security and limits
+- PII minimization in feature payloads.
+- Quotas on recommendation and event endpoints per tenant/app.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `RecommendationRequest`: online ranking call context.
+- `CandidateSet`: generated pool and source attribution.
+- `FeatureSnapshot`: point-in-time features used for scoring.
+- `RecommendationResult`: ranked list and model version.
+- `InteractionEvent`: click/view/convert feedback signal.
+
+### 2) Storage and indexing model
+- Online feature store keyed by `user_id`.
+- Offline warehouse for training and backfills.
+- Indexes:
+  - `idx_feature_by_user(user_id, feature_ts desc)`
+  - `idx_result_by_request(request_id)`
+  - `idx_event_by_user_ts(user_id, ts desc)`
+
+### 3) Endpoint matrix (comprehensive)
+- `GET /v1/recommendations?user_id=...` online serving.
+- `POST /v1/events` interaction ingest.
+- `POST /v1/features/snapshots` trigger feature materialization.
+- `GET /v1/models/{model_id}/metrics` quality/latency metrics.
+- `POST /v1/experiments/assign` experiment assignment.
+- `GET /v1/recommendations/{request_id}` replay/debug endpoint.
+- `POST /v1/candidates/generate` stage-1 generation.
+- `POST /v1/rank/score` stage-2 ranking.
+
+### 4) Contract examples
+Serve contract: `GET /v1/recommendations?user_id=u_8&surface=home&limit=20`
+```json
+{
+  "request_id": "rec_991",
+  "user_id": "u_8",
+  "surface": "home",
+  "limit": 20
+}
+```
+```json
+{
+  "request_id": "rec_991",
+  "items": [{"id": "item_1", "score": 0.91}],
+  "model_version": "ranker_2026_05_12",
+  "feature_freshness_sec": 18
+}
+```
+Event contract: `POST /v1/events`
+```json
+{
+  "event_id": "evt_77",
+  "user_id": "u_8",
+  "item_id": "item_1",
+  "event_type": "click",
+  "ts": "2026-05-13T19:20:00Z"
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Event dedupe by `event_id`.
+- Serving path may degrade to fallback model under stale features.
+- Online and offline feature parity tracked by skew metrics.
+
+### 6) Error taxonomy
+- `409_EXPERIMENT_ASSIGNMENT_CONFLICT`
+- `422_INVALID_CONTEXT_FEATURES`
+- `429_RECOMMENDATION_RATE_LIMIT`
+
+### 7) Security, quotas, and observability
+- PII minimization and feature access controls.
+- Tenant-level quotas on serve and event ingest.
+- Metrics: `serve_p95_ms`, `feature_staleness_sec`, `ctr_by_model`, `fallback_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Event streams to experimentation and analytics systems:
+  - `recommendation.served`
+  - `recommendation.clicked`
+  - `recommendation.converted`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`
+  - Body fields: `request_id`, `user_id`, `item_id`, `model_version`, `surface`, `event_ts`
+- Reliability rules:
+  - At-least-once delivery with outbox-backed publishing.
+  - Dedupe key: `event_id`.
+  - Exactly-once effect downstream via idempotent sinks.
+
+Example `recommendation.served` payload:
+```json
+{
+  "event_id": "evt_rec_19",
+  "event_type": "recommendation.served",
+  "request_id": "rec_991",
+  "user_id": "u_8",
+  "item_id": "item_1",
+  "model_version": "ranker_2026_05_12",
+  "event_ts": "2026-05-13T20:18:00Z"
+}
+```

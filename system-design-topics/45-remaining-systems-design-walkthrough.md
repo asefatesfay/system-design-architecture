@@ -774,3 +774,120 @@ Encryption at rest: the Conversation DB (Postgres) is encrypted at the tablespac
 > **"A host cancels a booking 24 hours before check-in. Your system must refund the guest, notify them, update availability, and optionally apply a host penalty — all reliably. How?"**
 
 Use the Saga pattern with compensating transactions. The cancellation triggers a saga orchestrated by a Cancellation Service: (1) **Refund** — call Payment Service with `refund(payment_id, amount, reason="host_cancel")`. Idempotency key: `refund:{booking_id}`. (2) **Notify guest** — publish `booking_cancelled` event to Kafka; Notification Service sends email/push. If notification fails, it retries with exponential backoff; failure to notify does not roll back the refund. (3) **Update availability** — update the listing's availability calendar to mark the dates as open again. (4) **Host penalty** — if the cancellation is within 24 hours and the host has exceeded their cancellation threshold, call the Penalty Service to apply a fee to the host's payout. If any step fails, the Saga logs the failure, alerts on-call, and retries with backoff for up to 24 hours. The refund is always step 1 and is the highest priority — the guest must be refunded even if subsequent steps fail. The system logs each step's completion status in a saga state table (Postgres) for auditability.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/bookings` create booking.
+- `GET /v1/bookings/{booking_id}` fetch booking state and timeline.
+- `POST /v1/bookings/{booking_id}/cancel` start cancellation saga.
+- `GET /v1/cancellation_sagas/{saga_id}` read refund/notification/penalty progress.
+- `POST /v1/refunds` create manual or automated refund.
+
+### Reliability and consistency
+- Booking and cancellation writes require client request IDs for dedupe.
+- Cancellation returns operation/saga IDs for async progress tracking.
+- Refund + booking-state transition are sequenced through saga state to avoid double actions.
+
+### Security and limits
+- Host/guest role checks on booking and cancellation paths.
+- Anti-fraud limits on refund creation and repeated cancellation attempts.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Booking`: reservation state with guest/host ownership boundaries.
+- `CancellationSaga`: orchestrated workflow state for refund/notifications/penalties.
+- `Refund`: payment reversal state and processor reference.
+- `AvailabilityWindow`: listing inventory for date ranges.
+- `PenaltyRecord`: host-side policy enforcement artifact.
+
+### 2) Storage and indexing model
+- OLTP for booking lifecycle; saga state table for compensations.
+- Indexes:
+  - `idx_booking_by_listing(listing_id, checkin_at)`
+  - `idx_booking_by_guest(guest_id, created_at desc)`
+  - `idx_saga_by_booking(booking_id)`
+- Outbox/event log for reliable notification and side effects.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/bookings` create booking.
+- `GET /v1/bookings/{booking_id}` booking state timeline.
+- `POST /v1/bookings/{booking_id}/cancel` initiate cancellation saga.
+- `GET /v1/cancellation_sagas/{saga_id}` saga progress.
+- `POST /v1/refunds` create refund operation.
+- `PATCH /v1/availability/{listing_id}` inventory updates.
+- `POST /v1/penalties` apply host penalty.
+- `GET /v1/bookings?guest_id=...&cursor=...` user booking history.
+
+### 4) Contract examples
+Write contract: `POST /v1/bookings/{booking_id}/cancel`
+```json
+{
+  "client_request_id": "cancel_401",
+  "actor_id": "host_44",
+  "reason": "maintenance_issue",
+  "cancelled_at": "2026-05-13T19:20:00Z"
+}
+```
+```json
+{
+  "booking_id": "b_722",
+  "state": "cancellation_in_progress",
+  "saga_id": "saga_88",
+  "refund": {"state": "queued", "idempotency_key": "refund:b_722"}
+}
+```
+Read contract: `GET /v1/cancellation_sagas/{saga_id}`
+```json
+{
+  "saga_id": "saga_88",
+  "refund_state": "completed",
+  "notify_state": "retrying",
+  "availability_state": "completed"
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Cancellation dedupe by `(booking_id, client_request_id)`.
+- Inventory update and booking-state transition serialized per listing/date.
+- Refund completion never rolled back by notification failure.
+
+### 6) Error taxonomy
+- `409_BOOKING_NOT_CANCELLABLE`
+- `422_REFUND_ALREADY_PROCESSED`
+- `403_ACTOR_NOT_AUTHORIZED`
+
+### 7) Security, quotas, and observability
+- Host/guest role checks and policy-driven penalties.
+- Limits on cancellation retries and refund operations.
+- Metrics: `cancel_to_refund_latency_ms`, `saga_retry_depth`, `availability_reconcile_failures`.
+
+### 8) Webhook and event contracts (where applicable)
+- Saga side-effect events:
+    - `booking.cancelled`
+    - `refund.completed`
+    - `penalty.applied`
+- Delivery contract:
+    - Headers: `X-Event-Id`, `X-Signature`, `X-Saga-Id`
+    - Body fields: `booking_id`, `saga_id`, `step`, `state`, `event_ts`
+- Reliability rules:
+    - Outbox-backed at-least-once dispatch.
+    - Consumer dedupe on `event_id`; step ordering by `(saga_id, step_seq)`.
+
+Example `refund.completed` payload:
+```json
+{
+    "event_id": "evt_bkg_55",
+    "event_type": "refund.completed",
+    "booking_id": "b_722",
+    "saga_id": "saga_88",
+    "step_seq": 2,
+    "state": "completed",
+    "event_ts": "2026-05-13T19:50:00Z"
+}
+```

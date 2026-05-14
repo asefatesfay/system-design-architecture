@@ -502,3 +502,121 @@ With Sender Keys: one encryption operation (encrypt the message with the group s
 > **"Your message queue stores encrypted messages for offline users. How long do you retain them, and what's your storage cost at 100B messages/day?"**
 
 WhatsApp retains undelivered messages for 30 days. After 30 days, they are deleted. Average message payload (encrypted): ~1KB for text, ~150KB for images. At 100B messages/day × 1KB average × 30-day retention = 3 PB of queued message storage. In practice the average is lower because most messages are delivered within seconds (< 1% are queued for more than a day). Real retention cost is closer to 30 days × (1% undelivered × 100B messages × 1KB) = ~30 TB — manageable. The design point: never store plaintext. The queue holds ciphertext blobs. Even if the queue store is breached, messages are unreadable without the recipient's private key.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/messages` send a message.
+- `GET /v1/chats/{chat_id}/messages?cursor=...` page history.
+- `POST /v1/messages/{message_id}/ack` delivery/read receipts.
+- `POST /v1/media` upload media metadata + obtain upload URL.
+- `GET /v1/presence/{user_id}` fetch presence state.
+
+### Reliability and consistency
+- Require `Idempotency-Key` for send/retry flows.
+- Store-and-forward queues guarantee at-least-once delivery.
+- Ordering guaranteed within chat partition key.
+
+### Security and limits
+- Enforce sender membership for chat operations.
+- Per-recipient and per-group send limits to prevent retry storms.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Conversation`: private/group channel container; key: `conversation_id`.
+- `Message`: immutable chat unit; key: `(conversation_id, message_id)`.
+- `DeliveryState`: per-recipient state transitions (`sent`, `delivered`, `read`).
+- `Membership`: participant and role model for channel permissions.
+- `PresenceSession`: ephemeral online/typing state.
+
+### 2) Storage and indexing model
+- Partition writes by `conversation_id` to preserve order.
+- Indexes:
+  - `idx_messages_by_conversation(conversation_id, server_seq)`
+  - `idx_receipts_by_message(message_id, recipient_id)`
+  - `idx_membership_by_user(user_id, conversation_id)`
+- Cold history tier for long retention; hot cache for recent windows.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/messages` send message.
+- `GET /v1/conversations/{conversation_id}/messages?cursor=...` paginate history.
+- `POST /v1/messages/{message_id}/ack` delivery/read receipt updates.
+- `POST /v1/conversations/{conversation_id}/members` add/remove member.
+- `GET /v1/conversations/{conversation_id}/presence` online/typing snapshot.
+- `POST /v1/media/upload_sessions` start media upload.
+- `POST /v1/conversations/{conversation_id}/mute` mute controls.
+- `GET /v1/sync?after_watermark=...` multi-conversation catch-up.
+
+### 4) Contract examples
+Write contract: `POST /v1/messages`
+```json
+{
+  "client_message_id": "cli_abc_91",
+  "conversation_id": "c_501",
+  "sender_id": "u_17",
+  "body": "are we shipping today?",
+  "message_type": "text"
+}
+```
+```json
+{
+  "message_id": "m_9001",
+  "conversation_id": "c_501",
+  "server_seq": 771201,
+  "accepted": true,
+  "server_ts": "2026-05-13T19:20:00Z"
+}
+```
+List contract: `GET /v1/conversations/{conversation_id}/messages?cursor=771150&limit=2`
+```json
+{
+  "items": [{"message_id": "m_9000"}, {"message_id": "m_8999"}],
+  "next_cursor": "771149",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Strict dedupe key: `(sender_id, client_message_id)`.
+- Ordered delivery is guaranteed per conversation partition.
+- Receipt updates are monotonic state transitions only.
+
+### 6) Error taxonomy
+- `409_DUPLICATE_CLIENT_MESSAGE_ID`
+- `403_MEMBERSHIP_REQUIRED`
+- `422_INVALID_MESSAGE_PAYLOAD`
+
+### 7) Security, quotas, and observability
+- Membership and role checks before send/read.
+- Quotas: per-user send QPS, per-conversation burst cap, media upload bytes/day.
+- Metrics: `send_ack_latency_ms`, `queue_backlog`, `receipt_lag_ms`, `redelivery_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Outbound events for business integrations:
+  - `message.delivered`
+  - `message.read`
+  - `message.failed`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`, `X-Event-Timestamp`
+  - Body fields: `conversation_id`, `message_id`, `recipient_id`, `state`, `state_ts`
+- Reliability rules:
+  - At-least-once delivery with exponential backoff retries.
+  - Consumer dedupe key: `event_id`.
+  - Retryable responses: `429` and `5xx`; terminal for other `4xx`.
+
+Example `message.read` payload:
+```json
+{
+  "event_id": "evt_901",
+  "event_type": "message.read",
+  "message_id": "m_9001",
+  "conversation_id": "c_501",
+  "recipient_id": "u_22",
+  "state_ts": "2026-05-13T19:25:00Z"
+}
+```

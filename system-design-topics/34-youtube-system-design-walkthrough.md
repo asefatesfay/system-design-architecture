@@ -571,3 +571,118 @@ The transcoding job must be idempotent and restartable. Each video is split into
 > **"How does YouTube's auto-caption pipeline work at scale across 100 languages?"**
 
 Auto-captions run as an async job after transcoding completes. The pipeline: extract audio track → run speech-to-text (Google's ASR model, language auto-detected) → generate timed caption file (WebVTT format) → store alongside the video. Language detection uses a short audio sample. For non-English content, the model routes to a language-specific ASR model. Translation to 100+ languages runs separately: source-language captions → machine translation (Google Translate API) per target language, stored as separate WebVTT files. The latency from upload to captions available is typically 1–24 hours depending on video length and language. The compute cost scales linearly with total audio duration — YouTube processes millions of hours of video per day, making this one of the largest ASR workloads in the world.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/videos` create upload session.
+- `PUT /v1/uploads/{upload_id}/parts/{part_no}` resumable chunk upload.
+- `POST /v1/videos/{video_id}/publish` finalize and enqueue transcode.
+- `GET /v1/videos/{video_id}` video metadata + playback readiness.
+- `GET /v1/feed/home?cursor=...` personalized recommendation page.
+
+### Reliability and consistency
+- Upload part numbers + checksums provide safe resume semantics.
+- Publish endpoint is idempotent and emits one processing workflow.
+- Async status model (`processing`, `ready`, `failed`) decouples clients.
+
+### Security and limits
+- Signed upload URLs with short TTL.
+- Content policy and ownership checks on publish actions.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Title`: logical video/episode resource with lifecycle state.
+- `AssetVariant`: transcoded renditions by codec/bitrate/resolution.
+- `PlaybackPolicy`: entitlement and geo/device policy snapshot.
+- `PlaybackSession`: tokenized session for manifest and segment access.
+- `ViewEvent`: play/pause/seek telemetry for personalization and billing.
+
+### 2) Storage and indexing model
+- Metadata in OLTP store keyed by `title_id`; media in object storage/CDN.
+- Indexes:
+  - `idx_title_by_owner(owner_id, created_at desc)`
+  - `idx_variant_by_title(title_id, bitrate)`
+  - `idx_view_event_by_user(user_id, ts desc)`
+- Processing state machine persisted: `uploaded -> processing -> ready -> failed`.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/titles` create upload session.
+- `PUT /v1/uploads/{upload_id}/parts/{part_no}` resumable upload.
+- `POST /v1/titles/{title_id}/publish` finalize and trigger processing.
+- `GET /v1/titles/{title_id}` metadata + processing state.
+- `POST /v1/playback/tokens` mint playback token.
+- `GET /v1/playback/manifests/{session_id}` fetch HLS/DASH manifest.
+- `POST /v1/events/view` ingest telemetry.
+- `GET /v1/feed/home?cursor=...` personalized rows.
+
+### 4) Contract examples
+Write contract: `POST /v1/playback/tokens`
+```json
+{
+  "title_id": "vid_301",
+  "user_id": "u_44",
+  "device_id": "dev_7",
+  "profile_id": "p_main"
+}
+```
+```json
+{
+  "session_id": "ps_88",
+  "playback_token": "tok_xxx",
+  "manifest_url": "https://cdn.example.com/m/vid_301.m3u8",
+  "expires_at": "2026-05-13T19:30:00Z"
+}
+```
+Read contract: `GET /v1/titles/{title_id}`
+```json
+{
+  "title_id": "vid_301",
+  "state": "ready",
+  "variants": [{"codec": "h264", "bitrate": 3000000, "resolution": "1080p"}]
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- `publish` idempotent by `(title_id, client_publish_id)`.
+- Playback token mint can return existing active session for same tuple.
+- Processing state changes monotonic and auditable.
+
+### 6) Error taxonomy
+- `403_ENTITLEMENT_DENIED`
+- `409_TITLE_NOT_READY`
+- `429_PLAYBACK_TOKEN_RATE_LIMIT`
+
+### 7) Security, quotas, and observability
+- Entitlement + geo checks before token issuance.
+- Signed URLs and short token TTLs.
+- Metrics: `token_issue_latency_ms`, `startup_time_ms`, `rebuffer_ratio`, `drm_error_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Publisher callbacks (creator platform and internal pipeline):
+  - `video.processing.completed`
+  - `video.processing.failed`
+  - `video.captions.ready`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`
+  - Body fields: `title_id`, `state`, `failed_stage`, `variant_count`, `published_at`
+- Reliability rules:
+  - At-least-once delivery with bounded retries and dead-letter queue.
+  - Idempotency key for receivers: `event_id`.
+
+Example `video.processing.completed` payload:
+```json
+{
+  "event_id": "evt_vid_77",
+  "event_type": "video.processing.completed",
+  "title_id": "vid_301",
+  "state": "ready",
+  "variant_count": 6,
+  "published_at": "2026-05-13T19:40:00Z"
+}
+```

@@ -50,6 +50,9 @@ This directory contains comprehensive guides for essential system design concept
 29. [Distributed Locking](./29-distributed-locking.md) - Coordinating distributed operations
 30. [Checksum](./30-checksum.md) - Data integrity verification
 
+### Advanced Walkthroughs & Playbooks
+- [Comprehensive API Design Playbook](./42-comprehensive-api-design-playbook.md) - End-to-end API design for interviews and production
+
 ## 🎯 How to Use This Guide
 
 Each topic file contains:

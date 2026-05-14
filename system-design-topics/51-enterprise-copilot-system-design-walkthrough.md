@@ -148,3 +148,119 @@ Example: "Send refund email to customer" requires manager approval + logged reas
 - Rich logging vs storage/compliance cost.
 
 Real-world apps to relate: Microsoft 365 Copilot, Notion AI, Slack AI, Salesforce Einstein Copilot.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/orgs/{org_id}/assist` enterprise assistant request.
+- `POST /v1/connectors/{connector_id}/sync` data connector sync trigger.
+- `GET /v1/knowledge/search` enterprise retrieval endpoint.
+- `POST /v1/policies/evaluate` policy and compliance decision point.
+- `GET /v1/audit/events?cursor=...` audit trail export.
+
+### Reliability and consistency
+- Connector syncs are idempotent and checkpointed.
+- Assist requests include policy-evaluation trace IDs.
+- Knowledge index updates are async with freshness indicators.
+
+### Security and limits
+- Fine-grained RBAC/ABAC and document-level ACL filtering.
+- Full auditability, retention controls, and per-org quotas.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `AssistRequest`: tenant-scoped prompt and policy context.
+- `KnowledgeDoc`: indexed enterprise content with ACL tags.
+- `PolicyDecision`: allow/deny + rationale artifact.
+- `ConnectorSyncJob`: ingestion/sync checkpoint state.
+- `AuditEvent`: immutable log for compliance investigations.
+
+### 2) Storage and indexing model
+- Multi-tenant index separated by org boundary and ACL labels.
+- Indexes:
+  - `idx_assist_by_org(org_id, created_at desc)`
+  - `idx_doc_by_org_acl(org_id, acl_label, freshness_ts)`
+  - `idx_audit_by_org(org_id, event_ts desc)`
+- Sync checkpoints ensure incremental ingestion and replay safety.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/orgs/{org_id}/assist` enterprise assistant request.
+- `GET /v1/assist/{request_id}` retrieve status/output.
+- `POST /v1/connectors/{connector_id}/sync` trigger sync.
+- `GET /v1/connectors/{connector_id}/jobs/{job_id}` sync progress.
+- `GET /v1/knowledge/search` ACL-aware retrieval.
+- `POST /v1/policies/evaluate` policy decision point.
+- `GET /v1/audit/events?cursor=...` audit export.
+- `POST /v1/redaction/jobs` retroactive compliance redaction.
+
+### 4) Contract examples
+Write contract: `POST /v1/orgs/{org_id}/assist`
+```json
+{
+  "client_request_id": "er_30",
+  "user_id": "u_11",
+  "prompt": "summarize Q2 incident report",
+  "policy_mode": "strict"
+}
+```
+```json
+{
+  "request_id": "req_1002",
+  "state": "completed",
+  "answer": "...",
+  "policy_decision_id": "pd_88"
+}
+```
+Read contract: `GET /v1/audit/events?cursor=ae_90&limit=2`
+```json
+{
+  "items": [{"event_id": "ae_91", "action": "assist_request", "actor_id": "u_11"}],
+  "next_cursor": "ae_91",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Assist dedupe by `(org_id, client_request_id)`.
+- Connector sync jobs dedupe by `(connector_id, source_checkpoint)`.
+- Policy decision snapshot is attached immutably to each response.
+
+### 6) Error taxonomy
+- `403_POLICY_DENIED`
+- `409_CONNECTOR_SYNC_RUNNING`
+- `422_KNOWLEDGE_SCOPE_INVALID`
+
+### 7) Security, quotas, and observability
+- Mandatory RBAC/ABAC + document-level ACL filtering.
+- Quotas by org, connector, and policy tier.
+- Metrics: `policy_eval_latency_ms`, `acl_filter_hit_ratio`, `sync_freshness_lag_min`, `audit_export_p95_ms`.
+
+### 8) Webhook and event contracts (where applicable)
+- Enterprise integration callbacks:
+  - `connector.sync.completed`
+  - `connector.sync.failed`
+  - `assist.policy_blocked`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Org-Id`, `X-Signature`
+  - Body fields: `org_id`, `connector_id`, `job_id`, `state`, `reason`, `event_ts`
+- Reliability rules:
+  - At-least-once delivery with dead-letter routing for exhausted retries.
+  - Dedupe by `event_id`; enforce tenant match with `org_id`.
+
+Example `connector.sync.completed` payload:
+```json
+{
+  "event_id": "evt_sync_88",
+  "event_type": "connector.sync.completed",
+  "org_id": "org_11",
+  "connector_id": "con_7",
+  "job_id": "job_91",
+  "state": "completed",
+  "event_ts": "2026-05-13T20:05:00Z"
+}
+```

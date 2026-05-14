@@ -166,3 +166,121 @@ This budget forces strict timeout policies and fallback:
 - Answer length vs speed: long outputs increase cost and p95.
 
 Real-world apps to relate: Perplexity, Bing Copilot answer mode, Google AI Overviews.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/search` query retrieval + synthesis.
+- `GET /v1/search/{request_id}` fetch async result status.
+- `POST /v1/citations/resolve` source attribution normalization.
+- `POST /v1/index/ingest` document ingestion endpoint.
+- `GET /v1/index/documents/{doc_id}` indexed document metadata.
+
+### Reliability and consistency
+- Query requests are idempotent by request key to avoid duplicate expensive runs.
+- Retrieval and synthesis stages are independently retriable.
+- Responses include citation/version metadata for reproducibility.
+
+### Security and limits
+- Tenant-scoped corpus access controls.
+- Query and ingestion rate limits with abuse detection.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `SearchRequest`: query plus retrieval policy.
+- `RetrievedDocument`: ranked source candidates and snippets.
+- `Answer`: synthesized response with citation links.
+- `IndexDocument`: ingestible content unit and metadata.
+- `CitationMap`: answer span to source mapping.
+
+### 2) Storage and indexing model
+- Hybrid index: lexical inverted index + vector ANN store.
+- Indexes:
+  - `idx_search_by_tenant(tenant_id, created_at desc)`
+  - `idx_doc_by_source(source_id, updated_at desc)`
+  - `idx_answer_by_request(request_id)`
+- Retrieval and generation steps separately observable.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/search` retrieval + synthesis pipeline.
+- `GET /v1/search/{request_id}` async status/result.
+- `POST /v1/index/ingest` document ingestion.
+- `GET /v1/index/documents/{doc_id}` doc metadata.
+- `POST /v1/citations/resolve` normalize source attribution.
+- `POST /v1/search/feedback` user feedback signals.
+- `GET /v1/search/history?cursor=...` prior queries.
+- `POST /v1/search/rerank` explicit reranking stage.
+
+### 4) Contract examples
+Write contract: `POST /v1/search`
+```json
+{
+  "client_request_id": "sr_41",
+  "query": "compare OT vs CRDT",
+  "top_k": 8
+}
+```
+```json
+{
+  "request_id": "req_82",
+  "answer": "...",
+  "citations": [{"doc_id": "d_3", "url": "https://..."}],
+  "state": "completed"
+}
+```
+Read contract: `GET /v1/search/{request_id}`
+```json
+{
+  "request_id": "req_82",
+  "retrieval_ms": 48,
+  "generation_ms": 340,
+  "state": "completed"
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Search dedupe by `(tenant_id, client_request_id)`.
+- Retrieval timeout fallback allowed with reduced citations.
+- Citation version pinning ensures reproducibility window.
+
+### 6) Error taxonomy
+- `422_UNSAFE_QUERY_POLICY`
+- `409_REQUEST_ALREADY_RUNNING`
+- `429_QUERY_BUDGET_EXCEEDED`
+
+### 7) Security, quotas, and observability
+- Corpus-level ACL checks before retrieval.
+- Query and ingestion quotas with abuse controls.
+- Metrics: `search_p95_ms`, `citation_coverage_ratio`, `hallucination_guardrail_trigger_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Search pipeline callbacks:
+  - `search.completed`
+  - `search.degraded`
+  - `index.ingest.completed`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`
+  - Body fields: `request_id`, `state`, `retrieval_ms`, `generation_ms`, `citation_count`, `event_ts`
+- Reliability rules:
+  - At-least-once webhook dispatch.
+  - Receiver dedupe by `event_id`.
+  - `search.degraded` indicates fallback behavior, not hard failure.
+
+Example `search.degraded` payload:
+```json
+{
+  "event_id": "evt_search_31",
+  "event_type": "search.degraded",
+  "request_id": "req_82",
+  "state": "completed_with_fallback",
+  "retrieval_ms": 120,
+  "generation_ms": 360,
+  "citation_count": 3,
+  "event_ts": "2026-05-13T20:20:00Z"
+}
+```

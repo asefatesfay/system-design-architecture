@@ -346,3 +346,120 @@ Implication: charge more for long-context requests (reflected in token pricing).
 - **Safety / content filtering:** Output moderation layer between GPU output and Stream Router.
 - **Multi-modal inputs:** Image/file processing pipeline upstream of the inference worker.
 - **Evaluation & shadow traffic:** New model versions receive shadow traffic (10%) before full rollout.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/chat/completions` synchronous generation.
+- `POST /v1/responses` unified response API with tools/multimodal options.
+- `POST /v1/batches` async batch inference jobs.
+- `GET /v1/models` model capability discovery.
+- `POST /v1/files` upload context artifacts.
+
+### Reliability and consistency
+- Streaming responses support client resume via request IDs.
+- Idempotency keys on expensive generation retries.
+- Queue-based admission control for overload and fairness.
+
+### Security and limits
+- Per-tenant token and request budgets.
+- Content safety policy checks and audit logging hooks.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `InferenceRequest`: canonical unit of generation with model/config metadata.
+- `InferenceResult`: output payload and token usage accounting.
+- `BatchJob`: asynchronous bulk inference orchestration.
+- `ContextFile`: uploaded context artifact references.
+- `SafetyDecision`: moderation/classification verdict attached to output.
+
+### 2) Storage and indexing model
+- Request metadata in OLTP; token usage and traces in analytics store.
+- Indexes:
+  - `idx_request_by_tenant(tenant_id, created_at desc)`
+  - `idx_batch_by_tenant(tenant_id, state, created_at)`
+  - `idx_result_by_request(request_id)`
+- Admission queue controls GPU worker saturation.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/responses` synchronous or streaming generation.
+- `POST /v1/chat/completions` compatibility endpoint.
+- `POST /v1/batches` async batch job submission.
+- `GET /v1/batches/{job_id}` batch state.
+- `POST /v1/files` upload context file.
+- `GET /v1/models` model capabilities and limits.
+- `POST /v1/moderations` pre/post content safety checks.
+- `GET /v1/usage?cursor=...` token consumption audit.
+
+### 4) Contract examples
+Write contract: `POST /v1/responses`
+```json
+{
+  "client_request_id": "cr_55",
+  "model": "gpt-4.1",
+  "input": "summarize this design doc",
+  "temperature": 0.2,
+  "stream": false
+}
+```
+```json
+{
+  "request_id": "req_700",
+  "state": "completed",
+  "output_text": "...",
+  "usage": {"input_tokens": 120, "output_tokens": 210}
+}
+```
+Read contract: `GET /v1/batches/{job_id}`
+```json
+{
+  "job_id": "bj_90",
+  "state": "running",
+  "progress": {"completed": 1200, "total": 5000}
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Request dedupe key: `(tenant_id, client_request_id)`.
+- Streaming resume supported via `request_id` checkpoints.
+- Usage accounting committed exactly once per accepted request.
+
+### 6) Error taxonomy
+- `429_CAPACITY_THROTTLED`
+- `422_CONTEXT_TOO_LARGE`
+- `403_MODEL_NOT_ALLOWED`
+
+### 7) Security, quotas, and observability
+- Tenant isolation for prompts, outputs, and files.
+- Token/rate budgets per org and per model tier.
+- Metrics: `time_to_first_token_ms`, `tokens_per_sec`, `moderation_block_rate`, `gpu_queue_wait_ms`.
+
+### 8) Webhook and event contracts (where applicable)
+- Async lifecycle callbacks:
+  - `response.completed`
+  - `response.failed`
+  - `batch.completed`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`
+  - Body fields: `request_id`, `job_id`, `state`, `usage`, `error`, `event_ts`
+- Reliability rules:
+  - At-least-once delivery with retry backoff.
+  - Receiver dedupe by `event_id`.
+  - For streamed responses, final webhook must contain terminal state only.
+
+Example `response.completed` payload:
+```json
+{
+  "event_id": "evt_llm_101",
+  "event_type": "response.completed",
+  "request_id": "req_700",
+  "state": "completed",
+  "usage": {"input_tokens": 120, "output_tokens": 210},
+  "event_ts": "2026-05-13T20:15:00Z"
+}
+```

@@ -303,3 +303,127 @@ Deletion is an async background job — never synchronous with user traffic. Arc
 > **"A user searches for a keyword across their entire 5-year Slack message history. How do you return results in < 500ms?"**
 
 Several design constraints make this feasible: (1) The search is scoped to the user's accessible channels (set is known server-side from their membership). (2) Elasticsearch has the message index warm in OS file cache for active workspaces. (3) The query runs against a pre-built inverted index — not a full scan of Cassandra message history. The latency breakdown: API gateway to search service (~10ms) + permission filter computation (user's channel list, from Redis cache, ~5ms) + Elasticsearch query (~50–200ms for a well-tuned cluster) + result ranking and response serialization (~20ms) = 85–235ms total. The failure mode is cold cache: if the workspace's Elasticsearch shards are not in OS file cache (e.g., a rarely-used Enterprise workspace), the first query after a cold start takes 1–3 seconds as shards are loaded from disk. Mitigation: warm up shards for workspaces with active users at the start of the business day (predictive warming based on historical activity patterns).
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/channels/{channel_id}/messages` send message.
+- `GET /v1/channels/{channel_id}/history?cursor=...` channel history.
+- `POST /v1/channels/{channel_id}/members` join/leave channel.
+- `POST /v1/events/ack` event delivery acknowledgments.
+- `POST /v1/search/messages` message search query.
+
+### Reliability and consistency
+- Send endpoints idempotent by client message ID.
+- Fanout and indexing are async; history is eventually indexed.
+- Retries bounded with dedupe to avoid duplicate posts.
+
+### Security and limits
+- Workspace- and channel-level authorization checks.
+- Per-app and per-workspace rate limits for bot traffic.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Workspace`: tenant boundary for users/channels/apps; key: `workspace_id`.
+- `ChannelMessage`: immutable chat unit; key: `(channel_id, message_id)`.
+- `DeliveryState`: per-recipient state transitions (`sent`, `delivered`, `read`).
+- `Membership`: user-to-channel membership and role grants.
+- `Thread`: message-thread reply tree and metadata.
+
+### 2) Storage and indexing model
+- Partition writes by `channel_id` to preserve order.
+- Indexes:
+  - `idx_messages_by_channel(channel_id, server_seq)`
+  - `idx_receipts_by_message(message_id, recipient_id)`
+  - `idx_membership_by_user(user_id, workspace_id)`
+- Cold history tier for long retention; hot cache for recent windows.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/channels/{channel_id}/messages` send message.
+- `GET /v1/channels/{channel_id}/history?cursor=...` paginate history.
+- `POST /v1/messages/{message_id}/ack` delivery/read receipt updates.
+- `POST /v1/channels/{channel_id}/members` add/remove member.
+- `GET /v1/channels/{channel_id}/presence` online/typing snapshot.
+- `POST /v1/media/upload_sessions` start media upload.
+- `POST /v1/channels/{channel_id}/mute` mute controls.
+- `GET /v1/sync?after_watermark=...` multi-workspace catch-up.
+
+### 4) Contract examples
+Write contract: `POST /v1/channels/{channel_id}/messages`
+```json
+{
+  "client_message_id": "cli_abc_91",
+  "workspace_id": "w_501",
+  "channel_id": "ch_12",
+  "sender_id": "u_17",
+  "body": "are we shipping today?",
+  "message_type": "text",
+  "thread_ts": null
+}
+```
+```json
+{
+  "message_id": "m_9001",
+  "channel_id": "ch_12",
+  "server_seq": 771201,
+  "accepted": true,
+  "server_ts": "2026-05-13T19:20:00Z"
+}
+```
+List contract: `GET /v1/channels/{channel_id}/history?cursor=771150&limit=2`
+```json
+{
+  "items": [{"message_id": "m_9000"}, {"message_id": "m_8999"}],
+  "next_cursor": "771149",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Strict dedupe key: `(sender_id, client_message_id)`.
+- Ordered delivery is guaranteed per channel partition.
+- Receipt updates are monotonic state transitions only.
+
+### 6) Error taxonomy
+- `409_DUPLICATE_CLIENT_MESSAGE_ID`
+- `403_MEMBERSHIP_REQUIRED`
+- `422_INVALID_MESSAGE_PAYLOAD`
+
+### 7) Security, quotas, and observability
+- Membership and role checks before send/read.
+- Quotas: per-user send QPS, per-channel burst cap, media upload bytes/day.
+- Metrics: `send_ack_latency_ms`, `queue_backlog`, `receipt_lag_ms`, `redelivery_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Slack-style Events API callbacks:
+  - `message.channels`
+  - `app_mention`
+  - `member_joined_channel`
+- Delivery contract:
+  - Headers: `X-Slack-Signature`, `X-Slack-Request-Timestamp`, `X-Event-Id`
+  - Body fields: `team_id`, `api_app_id`, `type`, `event`, `event_id`, `event_time`
+- Reliability rules:
+  - Delivery is at-least-once; app endpoint must ACK fast and process async.
+  - Dedupe by `event_id` for replay-safe handling.
+
+Example `app_mention` callback:
+```json
+{
+  "token": "verification_token",
+  "team_id": "T123",
+  "api_app_id": "A123",
+  "event": {
+    "type": "app_mention",
+    "user": "U17",
+    "channel": "C12",
+    "text": "help with deploy"
+  },
+  "event_id": "Ev9001",
+  "event_time": 1778700100
+}
+```

@@ -611,3 +611,95 @@ Store a full snapshot at checkpoint intervals (e.g., every 100 operations or eve
 > **"Your WebSocket server holds in-memory session state. When it crashes mid-session with 200 active collaborators, what happens?"**
 
 All 200 clients must reconnect. The server was the CRDT merge authority. On restart, you need to rebuild state from the persisted operation log in the database. Clients buffer outgoing operations locally during the reconnect window and re-submit them after the new session is established. This requires idempotent operation IDs — re-submitting must not double-apply. The missing design here is a per-session operation log with cursor positions per client so recovery is deterministic.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/files` create a design file.
+- `GET /v1/files/{file_id}` fetch file metadata and permissions.
+- `GET /v1/files/{file_id}/nodes?ids=...` fetch node subtrees.
+- `POST /v1/files/{file_id}/operations` submit batched editing operations.
+- `GET /v1/files/{file_id}/presence` fetch active cursors/users.
+
+### Reliability and consistency
+- Use operation IDs for idempotent mutation retries.
+- Sequence operations per file shard to preserve ordering.
+- Use optimistic concurrency (`If-Match` / version) to avoid lost updates.
+
+### Security and limits
+- File-level ACL checks on every read/write path.
+- Rate-limit mutation endpoints per user and per file.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Workspace`: tenant boundary and billing owner; key: `workspace_id`.
+- `File`: design document root; key: `file_id`; ownership: workspace.
+- `Node`: canvas entities (frame, group, text, vector); key: `node_id`; parent-child tree.
+- `Operation`: CRDT/OT mutation record; key: `(file_id, op_id)`; immutable append log.
+- `PresenceSession`: ephemeral cursor/selection state; key: `(file_id, user_id, session_id)`.
+
+### 2) Storage and indexing model
+- Primary partition for writes: `(file_id, logical_shard)` to preserve local ordering.
+- Hot-path indexes:
+  - `idx_node_by_file_parent(file_id, parent_id, z_index)`
+  - `idx_ops_by_file_seq(file_id, server_seq)`
+  - `idx_file_by_workspace(workspace_id, updated_at desc)`
+- Snapshots every N operations reduce replay latency for reconnects.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/files` create file.
+- `GET /v1/files/{file_id}` metadata and ACL.
+- `GET /v1/files/{file_id}/nodes?ids=...` selective graph fetch.
+- `POST /v1/files/{file_id}/operations` append mutation batch.
+- `GET /v1/files/{file_id}/operations?after_seq=...&limit=...` catch-up stream.
+- `GET /v1/files/{file_id}/presence` active collaborators.
+- `POST /v1/files/{file_id}/share_links` create scoped links.
+- `PATCH /v1/files/{file_id}` rename/archive.
+
+### 4) Contract examples
+Write contract: `POST /v1/files/{file_id}/operations`
+```json
+{
+  "client_batch_id": "cb_901",
+  "base_version": 1242,
+  "ops": [
+    {"op_id": "op_1", "type": "move_node", "node_id": "n_45", "x": 320, "y": 180}
+  ]
+}
+```
+```json
+{
+  "accepted": true,
+  "new_version": 1243,
+  "ack_op_ids": ["op_1"],
+  "server_seq_range": [88201, 88201]
+}
+```
+Read contract: `GET /v1/files/{file_id}/operations?after_seq=88200&limit=2`
+```json
+{
+  "items": [{"server_seq": 88201, "op_id": "op_1", "type": "move_node"}],
+  "next_after_seq": 88201,
+  "has_more": false
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Deduplicate mutation batches by `(file_id, client_batch_id)`.
+- Reject stale `base_version` with conflict payload containing latest version.
+- Exactly-once apply semantics at operation level via `(file_id, op_id)` unique key.
+
+### 6) Error taxonomy
+- `409_VERSION_CONFLICT`: base version stale; include merge/catch-up hints.
+- `422_INVALID_OPERATION`: schema-valid but semantically invalid mutation.
+- `423_FILE_LOCKED`: temporary admin lock or migration lock.
+
+### 7) Security, quotas, and observability
+- ACL enforced per node/file read and write.
+- Rate limits: per-user op write QPS and per-file burst caps.
+- Must emit: `op_apply_latency_ms`, `conflict_rate`, `reconnect_replay_ops`, `presence_fanout_ms`.

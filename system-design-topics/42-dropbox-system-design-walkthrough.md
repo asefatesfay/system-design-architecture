@@ -282,3 +282,121 @@ The local Dropbox client monitors the sync folder via OS file-system events (ino
 > **"Dropbox's deduplication stores one copy of a file shared by 1,000 users. If one user modifies their copy, how do you avoid corrupting the other 999 users' files?"**
 
 Copy-on-write semantics. Files are stored as immutable blocks, identified by content hash. A "file" is a metadata record pointing to a sequence of block hashes — not the file content itself. When User 1 modifies one block of the file: the client uploads only the changed block (new hash), creates a new file metadata record pointing to the updated block sequence, and writes this new metadata record to User 1's namespace. The original block (shared by 999 users) is untouched — no reference is removed. User 1's file now points to: [original_block_1_hash, new_block_2_hash, original_block_3_hash, ...]. The 999 other users' file metadata still points to the old block sequence — completely unaffected. Deduplication happens at the block level, not the file level, and immutability is the core invariant that makes it safe.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/files/upload_sessions` start resumable upload.
+- `PUT /v1/files/upload_sessions/{id}/chunks/{offset}` append chunk.
+- `POST /v1/files/commit` finalize file version.
+- `GET /v1/files/{path_or_id}/metadata` metadata fetch.
+- `GET /v1/files/{path_or_id}/download` issue signed download URL.
+
+### Reliability and consistency
+- Chunk checksum + offset enforce exactly-ordered chunk assembly.
+- Commit is idempotent by content hash + session ID.
+- Metadata and content pointers versioned for conflict detection.
+
+### Security and limits
+- Namespace ACL checks and share-link policy enforcement.
+- Signed URLs with TTL and download rate controls.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Namespace`: logical ownership boundary for user/team files.
+- `FileEntry`: path to current version pointer.
+- `FileVersion`: immutable manifest of block hashes.
+- `ChunkRef`: deduplicated content-addressed block metadata.
+- `UploadSession`: resumable upload coordination resource.
+
+### 2) Storage and indexing model
+- Metadata in OLTP; blob content in object store by chunk hash.
+- Indexes:
+  - `idx_file_by_namespace_path(namespace_id, path)`
+  - `idx_version_by_file(file_id, created_at desc)`
+  - `idx_chunk_ref(chunk_hash)`
+- Reference counting garbage collection for unreferenced chunks.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/files/upload_sessions` start upload session.
+- `PUT /v1/files/upload_sessions/{id}/chunks/{offset}` append chunk.
+- `POST /v1/files/commit` finalize version.
+- `GET /v1/files/{path_or_id}/metadata` metadata fetch.
+- `GET /v1/files/{path_or_id}/download` signed URL issuance.
+- `POST /v1/files/{path_or_id}/copy` copy-on-write clone.
+- `PATCH /v1/files/{path_or_id}` rename/move.
+- `GET /v1/files/changes?cursor=...` incremental sync feed.
+
+### 4) Contract examples
+Write contract: `POST /v1/files/commit`
+```json
+{
+  "client_commit_id": "cc_101",
+  "namespace_id": "ns_7",
+  "path": "/designs/spec.pdf",
+  "chunk_hashes": ["h1", "h2", "h3"],
+  "size_bytes": 12582912
+}
+```
+```json
+{
+  "file_id": "f_77",
+  "version_id": "ver_402",
+  "state": "committed",
+  "deduped_chunks": 2,
+  "created_at": "2026-05-13T19:20:00Z"
+}
+```
+Read contract: `GET /v1/files/changes?cursor=wm_900&limit=2`
+```json
+{
+  "items": [{"path": "/designs/spec.pdf", "version_id": "ver_402"}],
+  "next_cursor": "wm_901",
+  "has_more": false
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Commit dedupe by `(namespace_id, client_commit_id)`.
+- Path-level optimistic version checks on move/rename.
+- Chunk upload validates offset and checksum for strict assembly.
+
+### 6) Error taxonomy
+- `409_PATH_VERSION_CONFLICT`
+- `422_MISSING_CHUNKS`
+- `413_FILE_TOO_LARGE`
+
+### 7) Security, quotas, and observability
+- Namespace ACL and share policy checks everywhere.
+- Upload rate limits and signed URL TTL enforcement.
+- Metrics: `commit_latency_ms`, `dedupe_ratio`, `sync_lag_ms`, `chunk_retry_rate`.
+
+### 8) Webhook and event contracts (where applicable)
+- Change notification events for integrators:
+  - `file.created`
+  - `file.updated`
+  - `file.deleted`
+- Delivery contract:
+  - Headers: `X-Event-Id`, `X-Event-Type`, `X-Signature`
+  - Body fields: `namespace_id`, `path`, `file_id`, `version_id`, `change_cursor`
+- Reliability rules:
+  - At-least-once webhook delivery; poll fallback via `GET /v1/files/changes`.
+  - Consumer dedupe with `event_id` and monotonic `change_cursor`.
+
+Example `file.updated` payload:
+```json
+{
+  "event_id": "evt_fs_11",
+  "event_type": "file.updated",
+  "namespace_id": "ns_7",
+  "path": "/designs/spec.pdf",
+  "file_id": "f_77",
+  "version_id": "ver_402",
+  "change_cursor": "wm_901"
+}
+```

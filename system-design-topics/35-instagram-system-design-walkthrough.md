@@ -281,3 +281,95 @@ The feed ranking model scores all candidate posts — not just recent ones. Cand
 > **"A user blocks another user, but the blocker has already fanned one of their posts into the blockee's feed cache. How do you handle this?"**
 
 The block relationship must be checked at feed read time, not just at fan-out time. Fan-out writes posts to feed caches eagerly, but the feed service applies a block filter before serving: when a user loads their feed, the service fetches their block list from a fast store (Redis set, updated on block action), then filters out any cached post from a blocked account. The block takes effect within seconds — the next time the blockee refreshes their feed. Posts already rendered on screen are not retroactively removed (client-side enforcement is impractical). This "write eagerly, filter on read" model is simpler and more correct than trying to retroactively purge fan-out caches on every block action.
+
+---
+
+## API Design Snapshot
+
+### Core endpoints
+- `POST /v1/posts` create post metadata.
+- `POST /v1/posts/{post_id}/media` attach media object references.
+- `GET /v1/feed?cursor=...` fetch ranked feed page.
+- `POST /v1/posts/{post_id}/like` like/unlike as idempotent toggle.
+- `GET /v1/users/{user_id}/posts?cursor=...` profile timeline.
+
+### Reliability and consistency
+- Feed reads use cursor pagination and cacheable page fragments.
+- Engagement writes use idempotent keys and async counter materialization.
+- Fanout tasks deduplicate by `(post_id, follower_id)`.
+
+### Security and limits
+- Privacy policy checks (public/private/followers) on reads.
+- Per-user write limits and abuse controls on engagement endpoints.
+
+---
+
+## API Data Model and Contract (Ordered)
+
+### 1) Domain resources and ownership
+- `Post`: immutable authored content unit.
+- `MediaRef`: attachment list per post with canonical ordering.
+- `Engagement`: like/repost/reply edges with actor identity.
+- `TimelineEntry`: materialized ranking candidate for a viewer.
+- `FollowEdge`: directed social graph relation.
+
+### 2) Storage and indexing model
+- Post writes in OLTP by `post_id`; timeline materialization async.
+- Indexes:
+  - `idx_post_by_author(author_id, created_at desc)`
+  - `idx_engagement_by_post(post_id, created_at desc)`
+  - `idx_timeline_by_user(user_id, rank_bucket, created_at desc)`
+- Fanout queue dedupe key: `(post_id, follower_id)`.
+
+### 3) Endpoint matrix (comprehensive)
+- `POST /v1/posts` create post/tweet.
+- `GET /v1/posts/{post_id}` detail fetch.
+- `GET /v1/feed/home?cursor=...` ranked timeline.
+- `POST /v1/posts/{post_id}/like` idempotent toggle.
+- `POST /v1/posts/{post_id}/repost` repost/retweet edge.
+- `POST /v1/posts/{post_id}/reply` threaded reply write.
+- `GET /v1/users/{user_id}/posts?cursor=...` author timeline.
+- `POST /v1/moderation/report` abuse signal ingest.
+
+### 4) Contract examples
+Write contract: `POST /v1/posts`
+```json
+{
+  "author_id": "u_12",
+  "client_post_id": "cp_55",
+  "text": "launch day",
+  "media_ids": ["img_1"],
+  "visibility": "followers"
+}
+```
+```json
+{
+  "post_id": "p_990",
+  "state": "published",
+  "fanout_enqueued": true,
+  "created_at": "2026-05-13T19:20:00Z"
+}
+```
+List contract: `GET /v1/feed/home?cursor=1715600400:p_990&limit=2`
+```json
+{
+  "items": [{"post_id": "p_990", "rank_score": 0.82}, {"post_id": "p_988", "rank_score": 0.80}],
+  "next_cursor": "1715600100:p_988",
+  "has_more": true
+}
+```
+
+### 5) Idempotency, concurrency, and consistency
+- Post create dedupe: `(author_id, client_post_id)`.
+- Like/repost endpoints are state transitions, not blind increments.
+- Feed eventually consistent; user timeline strongly consistent to author writes.
+
+### 6) Error taxonomy
+- `403_VISIBILITY_DENIED`
+- `409_DUPLICATE_CLIENT_POST_ID`
+- `422_POLICY_BLOCKED_CONTENT`
+
+### 7) Security, quotas, and observability
+- Privacy policy checks on read path.
+- Write abuse controls (per-user post, reply, like QPS).
+- Metrics: `fanout_enqueue_latency_ms`, `home_feed_p95_ms`, `publish_to_feed_delay_ms`.
