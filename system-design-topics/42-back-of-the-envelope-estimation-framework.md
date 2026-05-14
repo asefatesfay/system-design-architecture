@@ -10,6 +10,51 @@ Most engineers know architecture patterns. The gap in interviews is turning roug
 
 The goal is not perfect math. The goal is engineering intuition.
 
+## 0) 5-Minute Revision Map (Pre-Interview)
+
+Use this as a fast last-pass before interviews.
+
+### 1) Core equations (say these first)
+
+- QPS = Requests/day / 86,400
+- Peak QPS ~= Average QPS x (2 to 5)
+- Bandwidth ~= Throughput x Payload size x Multipliers
+
+Where multipliers usually include:
+- Fanout
+- Replication
+- Protocol/encryption overhead
+
+### 2) 30-second decision flow
+
+- Compute average and peak ops/sec
+- Convert to bytes/sec on each path
+- Identify first saturated boundary (client-edge, edge-origin, service-service, cross-region)
+- Pick the smallest architecture change that removes that bottleneck
+
+### 3) What to do based on what breaks
+
+- If throughput breaks first: queues, partitioning, async workers, backpressure
+- If bandwidth breaks first: compression, payload trimming, cache/CDN offload, delta sync
+- If storage growth breaks first: object storage, tiering, retention, compaction
+
+### 4) High-confidence interview checklist
+
+- How many servers?
+- How much DB/storage per day and per year?
+- How much peak bandwidth per path?
+- What fits in memory vs must go to disk/object storage?
+- Do we need cache, sharding, CDN, or multi-region?
+- What breaks first, and what is the smallest mitigation?
+
+### 5) Jump links for rapid review
+
+- [19) Bandwidth vs Throughput](#19-bandwidth-vs-throughput-rust-proof-interview-guide)
+- [20) Bandwidth Drills](#20-bandwidth-drills-simple---complex-with-explanations)
+- [21) Bandwidth Worksheet](#21-bandwidth-worksheet-practice-first-then-check)
+- [22) Worksheet Answer Key](#22-bandwidth-worksheet-answer-key)
+- [23) Common Bandwidth Mistakes](#23-common-bandwidth-mistakes-and-how-to-correct-them)
+
 ---
 
 ## 1) Core Mindset
@@ -1078,3 +1123,358 @@ Symptoms of bandwidth bottleneck:
 ### One-liner for interviews
 
 "I first compute throughput (ops/sec), then convert to bandwidth using payload size. That tells me whether I should prioritize parallel processing capacity or byte-reduction and edge-offload architecture."
+
+---
+
+## 20) Bandwidth Drills (Simple -> Complex) With Explanations
+
+Practice these in order. For each drill, do this sequence:
+- Compute peak throughput (ops/sec)
+- Convert to bandwidth (bytes/sec)
+- Identify which network boundary saturates first
+- State the architecture decision
+
+### Drill 1: Simple JSON API
+
+Prompt:
+- Peak traffic: 8,000 req/sec
+- Average response: 3 KB
+
+Quick math:
+- Bandwidth ~= 8,000 x 3 KB = 24,000 KB/sec = 24 MB/sec
+
+Explanation:
+- 24 MB/sec is modest for a backend fleet.
+- The first limit is usually app/DB CPU or query latency, not network.
+
+Design decision:
+- Keep architecture simple (single region is often fine).
+- Optimize queries first; CDN is not required for tiny dynamic JSON.
+
+### Drill 2: Mobile Feed API (Medium)
+
+Prompt:
+- Peak traffic: 90,000 req/sec
+- Average feed payload: 40 KB
+- Compression ratio: 50% (effective payload 20 KB)
+
+Quick math:
+- Uncompressed: 90,000 x 40 KB = 3.6 GB/sec
+- Compressed: 90,000 x 20 KB = 1.8 GB/sec
+
+Explanation:
+- Compression halves bandwidth and often reduces egress cost materially.
+- At this scale, every extra field in payload has real infra impact.
+
+Design decision:
+- Enable compression by default.
+- Add response shaping (field filtering/pagination).
+- Add read-through cache to reduce origin bandwidth and DB load.
+
+### Drill 3: Group Chat Fanout (Harder)
+
+Prompt:
+- Peak sends: 250,000 messages/sec
+- Message envelope: 700 bytes
+- Effective fanout: 6 recipients/message
+
+Quick math:
+- Raw send ingress ~= 250,000 x 700 bytes = 175 MB/sec
+- Internal fanout bandwidth ~= 175 MB/sec x 6 = 1.05 GB/sec
+
+Explanation:
+- The send API traffic looks manageable, but fanout multiplies bytes internally.
+- East-west service traffic can saturate before client ingress does.
+
+Design decision:
+- Decouple send and delivery with async fanout workers.
+- Partition recipients to spread fanout traffic.
+- Apply retry budgets and backpressure to avoid storm amplification.
+
+### Drill 4: Cross-Region Replication Impact
+
+Prompt:
+- Primary write stream: 400 MB/sec
+- Multi-region replication to 2 secondary regions
+- Protocol overhead + encryption overhead factor: 1.25x
+
+Quick math:
+- Replication traffic ~= 400 MB/sec x 2 x 1.25 = 1,000 MB/sec = 1 GB/sec cross-region
+
+Explanation:
+- Replication multiplies network cost and can increase write latency if synchronous.
+- This is often missed in interview answers.
+
+Design decision:
+- Use async replication for non-critical paths.
+- Keep only critical data on synchronous quorum.
+- Separate control-plane metadata from bulk data replication policies.
+
+### Drill 5: Video Delivery (Complex)
+
+Prompt:
+- Concurrent viewers at peak: 4M
+- Average stream bitrate: 2.5 Mbps
+- CDN hit ratio: 95%
+
+Quick math:
+- Total edge egress ~= 4M x 2.5 Mbps = 10 Tbps
+- Origin share (5% misses) ~= 10 Tbps x 0.05 = 0.5 Tbps
+
+Explanation:
+- Total user bandwidth demand is enormous regardless of backend design.
+- CDN hit ratio directly controls origin survivability and cost.
+
+Design decision:
+- CDN is mandatory.
+- Optimize cacheability and segment size for higher hit ratio.
+- Multi-region origin and pre-warming strategy are required.
+
+### Pattern Summary: How Decisions Change With Bandwidth
+
+- Low bandwidth (tens of MB/sec): prioritize code/query simplicity.
+- Medium bandwidth (GB/sec): compression, payload trimming, and caching become mandatory.
+- High bandwidth with fanout: async pipelines + partitioning become mandatory.
+- Very high global egress (Tbps): CDN and multi-region edge architecture are non-negotiable.
+
+### 30-Second Interview Script For Any Bandwidth Question
+
+"I will estimate peak ops/sec first, then multiply by effective payload size to get bandwidth. Next, I will identify which link saturates first: client-edge, edge-origin, service-service, or cross-region replication. Then I will choose the smallest design change that reduces bytes moved or redistributes traffic: compression, caching/CDN, sharding, async fanout, or replication policy changes."
+
+---
+
+## 21) Bandwidth Worksheet (Practice First, Then Check)
+
+Use this section like a mini exam.
+
+How to use:
+- Do the "Worksheet" part without looking at the answer key.
+- Time-box each drill to 2 to 4 minutes.
+- Then compare with the "Answer Key".
+
+### Worksheet Template (reuse for every drill)
+
+- Step 1: Peak throughput (ops/sec) = ______
+- Step 2: Effective payload size = ______
+- Step 3: Peak bandwidth = throughput x payload x factors = ______
+- Step 4: First saturated link (client-edge / edge-origin / service-service / cross-region) = ______
+- Step 5: Smallest architecture change = ______
+
+### Worksheet Drill A (Simple API)
+
+Given:
+- Peak traffic = 12,000 req/sec
+- Avg response size = 2 KB
+
+Fill in:
+- Peak bandwidth = ______
+- First saturated link = ______
+- Best first design action = ______
+
+### Worksheet Drill B (Feed API + Compression)
+
+Given:
+- Peak traffic = 110,000 req/sec
+- Avg payload = 36 KB
+- Compression ratio = 50% (effective payload halves)
+
+Fill in:
+- Uncompressed bandwidth = ______
+- Compressed bandwidth = ______
+- Best first design action = ______
+
+### Worksheet Drill C (Messaging Fanout)
+
+Given:
+- Peak sends = 300,000 msg/sec
+- Envelope size = 800 bytes
+- Effective fanout = 5
+
+Fill in:
+- Client ingress send bandwidth = ______
+- Internal fanout bandwidth = ______
+- First saturated link = ______
+- Best first design action = ______
+
+### Worksheet Drill D (Cross-Region Replication)
+
+Given:
+- Primary stream = 500 MB/sec
+- Replicate to 2 secondary regions
+- Overhead factor (protocol + encryption) = 1.2x
+
+Fill in:
+- Cross-region replication bandwidth = ______
+- Risk if synchronous replication everywhere = ______
+- Best first design action = ______
+
+### Worksheet Drill E (Video + CDN)
+
+Given:
+- Concurrent viewers = 3M
+- Avg bitrate = 3 Mbps
+- CDN hit ratio = 92%
+
+Fill in:
+- Total edge egress = ______
+- Origin egress share = ______
+- Best first design action = ______
+
+---
+
+## 22) Bandwidth Worksheet Answer Key
+
+### Answer A (Simple API)
+
+- Peak bandwidth = 12,000 x 2 KB = 24,000 KB/sec = 24 MB/sec
+- First saturated link = usually not network first (often app/DB compute)
+- Best first design action = keep design simple, optimize queries before network-heavy patterns
+
+### Answer B (Feed API + Compression)
+
+- Uncompressed = 110,000 x 36 KB = 3,960,000 KB/sec ~= 3.96 GB/sec
+- Compressed (50%) = 1.98 GB/sec
+- Best first design action = enable compression + payload shaping + caching to reduce origin traffic
+
+### Answer C (Messaging Fanout)
+
+- Client ingress send bandwidth = 300,000 x 800 bytes = 240,000,000 bytes/sec = 240 MB/sec
+- Internal fanout bandwidth = 240 MB/sec x 5 = 1.2 GB/sec
+- First saturated link = service-to-service fanout path (east-west)
+- Best first design action = async fanout pipeline + recipient partitioning + retry/backpressure controls
+
+### Answer D (Cross-Region Replication)
+
+- Cross-region replication bandwidth = 500 MB/sec x 2 x 1.2 = 1,200 MB/sec = 1.2 GB/sec
+- Risk if synchronous replication everywhere = higher write latency and wider blast radius during regional issues
+- Best first design action = use selective synchronous replication only for critical data; async for the rest
+
+### Answer E (Video + CDN)
+
+- Total edge egress = 3M x 3 Mbps = 9 Tbps
+- Origin egress share = 9 Tbps x 8% = 0.72 Tbps
+- Best first design action = maximize CDN hit ratio (cacheability, segment policy, pre-warming) and protect origins
+
+### Scoring Rubric (Self-Check)
+
+- 1 point: correct throughput math
+- 1 point: correct bandwidth conversion
+- 1 point: correct first bottleneck boundary
+- 1 point: architecture change matches bottleneck
+
+10 to 12 points:
+- Interview ready
+
+7 to 9 points:
+- Good base, tighten unit conversions and first-bottleneck calls
+
+6 or below:
+- Re-run drills and speak answers out loud using the 30-second script
+
+---
+
+## 23) Common Bandwidth Mistakes (And How To Correct Them)
+
+These are the most common interview misses. If you avoid these, your design conclusions become much more reliable.
+
+### Mistake 1: Mixing bits and bytes
+
+What goes wrong:
+- Treating Mbps as MB/sec directly.
+
+Correction:
+- 8 bits = 1 byte
+- 1 Mbps ~= 0.125 MB/sec
+- 1 Gbps ~= 125 MB/sec
+
+Design impact if wrong:
+- You can under-size or over-size network and CDN capacity by ~8x.
+
+### Mistake 2: Forgetting peak factor
+
+What goes wrong:
+- Estimating only average traffic and designing to average.
+
+Correction:
+- Peak QPS ~= 2x to 5x average (or based on product pattern).
+- Always size bottleneck paths for peak, not average.
+
+Design impact if wrong:
+- Systems look fine on paper but fail during normal daily spikes.
+
+### Mistake 3: Ignoring fanout multiplier
+
+What goes wrong:
+- Using send traffic only in chat/notifications/group systems.
+
+Correction:
+- Internal delivery bandwidth ~= send bandwidth x effective fanout.
+
+Design impact if wrong:
+- You miss that service-to-service traffic saturates before client ingress.
+
+### Mistake 4: Ignoring replication overhead
+
+What goes wrong:
+- Assuming one write path cost even with multi-region replication.
+
+Correction:
+- Replicated bandwidth ~= primary stream x number of replicas x overhead factor.
+
+Design impact if wrong:
+- Underestimating cross-region cost, latency, and blast radius.
+
+### Mistake 5: Ignoring protocol and encryption overhead
+
+What goes wrong:
+- Using payload size as total wire size.
+
+Correction:
+- Apply overhead factor (often 1.1x to 1.3x) unless explicitly excluded.
+
+Design impact if wrong:
+- Under-provisioned links and surprise saturation under load.
+
+### Mistake 6: Treating CDN hit ratio as a nice-to-have metric
+
+What goes wrong:
+- Computing total egress but not separating origin vs edge share.
+
+Correction:
+- Origin egress ~= total egress x (1 - hit ratio).
+
+Design impact if wrong:
+- You miss the key lever that protects origins and reduces cost.
+
+### Mistake 7: Forgetting payload shape changes traffic
+
+What goes wrong:
+- Keeping oversized response objects in high-QPS APIs.
+
+Correction:
+- Bandwidth scales linearly with payload size.
+- Remove unused fields, paginate, and compress.
+
+Design impact if wrong:
+- You may add unnecessary servers instead of reducing bytes.
+
+### Mistake 8: Optimizing compute before checking network boundaries
+
+What goes wrong:
+- Tuning CPU/database first when network path is saturated.
+
+Correction:
+- Identify first saturated boundary: client-edge, edge-origin, service-service, or cross-region.
+
+Design impact if wrong:
+- Expensive optimizations with little real latency or reliability benefit.
+
+### 60-Second Sanity Checklist Before You Finalize Any Design
+
+- Did I convert bits and bytes correctly?
+- Did I compute average and peak traffic?
+- Did I include fanout and replication multipliers?
+- Did I include protocol overhead?
+- Did I separate origin traffic from CDN edge traffic?
+- Did I identify the first saturated network boundary?
+- Does my architecture change directly target that boundary?
