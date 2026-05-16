@@ -111,6 +111,70 @@ erDiagram
     Comment ||--o{ Comment : "replies to"
 ```
 
+### 2.1 Story vs Post: API and System Design Impact
+
+The two objects both reference media, but they are optimized for different product behavior.
+
+| Dimension | Post | Story |
+|-----------|------|-------|
+| Product intent | Durable, profile/feed content | Ephemeral, recent-first content |
+| Lifetime | Persistent until deleted | Expires after 24h (`expires_at`) |
+| Media relationship | One or many media assets (carousel-friendly) | Typically one media asset per story row |
+| Primary reads | Home feed + profile grid + permalinks | Story tray + sequential story viewer |
+| Engagement | Likes/comments/saves with long tail | Views/replies/reactions with short half-life |
+
+#### API design perspective
+
+`Post` and `Story` should not share identical API semantics because clients consume them differently.
+
+| API aspect | Post design | Story design |
+|------------|-------------|--------------|
+| Create endpoint | `POST /v1/posts` with `media_ids[]` | `POST /v1/stories` with one `media_id` |
+| Validation | All media must be `ready`; carousel ordering rules apply | Media must be `ready`; enforce max duration and 24h expiry |
+| Read endpoint shape | Rich object for ranking and engagement counts | Lightweight object for fast tray loading and playback |
+| Pagination | Cursor pagination for feed/profile history | Grouped by author and ordered by recency/expiry |
+| Mutability | Caption edits and delete are common | Usually minimal edits; delete/hide is common |
+| Idempotency | Strongly required for create/delete writes | Required for create/view events to prevent double counting |
+
+Recommended contract clarity:
+
+- Keep `Post` APIs optimized for durability and retrieval across long time windows.
+- Keep `Story` APIs optimized for recency, expiry, and low-latency playback.
+- Expose `expires_at` and `has_unseen` fields for story clients to avoid extra calls.
+- Use separate rate-limit buckets because story-view writes can be much hotter than post creates.
+
+#### System design perspective
+
+The `Story` lifecycle introduces expiration-heavy behavior that impacts storage, caches, and counters differently from `Post`.
+
+| System aspect | Post impact | Story impact |
+|---------------|------------|--------------|
+| Storage model | Durable tables; often normalized via `PostMedia(post_id, media_id, position)` | TTL-aware storage keyed by `expires_at`; fast delete/compaction path |
+| Caching | Feed and profile caches with longer reuse windows | Tray and viewer caches with aggressive invalidation near expiry |
+| Fanout strategy | Feed fanout and ranking pipelines | Recent-first fanout; strict filtering of expired stories |
+| Counters | Like/comment counters with eventual consistency acceptable | View counters are high-volume and bursty; often async event aggregation |
+| CDN usage | Long-lived media URLs and derivative sizes | Short-lived assets and stricter cache-control near expiration |
+| Background jobs | Re-ranking, rehydration, backfills | Expiry sweeper, tombstoning, and archive/cleanup workers |
+| Abuse/moderation | Durable moderation queue and appeals | Real-time moderation SLA is tighter due to 24h window |
+
+#### What parts of the system this affects
+
+| Subsystem | Post responsibility | Story responsibility |
+|----------|---------------------|----------------------|
+| API Gateway | Route durable CRUD + feed reads | Route tray/view APIs and realtime-friendly reads |
+| Media service | Validate multi-media posts and derivatives | Validate single-story media and fast playback variants |
+| Feed service | Rank and paginate posts | Merge story tray ordering and unseen status |
+| Realtime service | Optional for comment/like notifications | Core for rapid story reactions/view updates |
+| Cache layer (Redis) | Feed cursors, profile pages, post metadata | Tray shards, unseen bitsets, short TTL keys |
+| Event bus (Kafka/PubSub) | PostCreated, PostLiked, CommentCreated | StoryCreated, StoryViewed, StoryExpired |
+| Counter service | Like/comment aggregates | View/reaction aggregates at high write rate |
+| Data warehouse/analytics | Long-term content and creator metrics | 24h engagement funnels and completion rates |
+
+Design rule:
+
+- Model `Post` for durability and discoverability.
+- Model `Story` for ephemerality, recency, and high-frequency interaction.
+
 ---
 
 ## 3. Authentication
@@ -268,6 +332,89 @@ sequenceDiagram
   I-->>N: Event published (like/comment/follow)
   N-->>C: push notification event
   end
+```
+
+### 4.2 Delivery Mechanisms (Webhook, Polling, SSE, WebSocket, Streams)
+
+API style and delivery mechanism are different concerns:
+
+- API style defines interface semantics (REST, GraphQL, gRPC).
+- Delivery mechanism defines how updates travel (pull vs push, sync vs async).
+
+#### Delivery mechanism matrix
+
+| Mechanism | Model | Direction | Latency Profile | Best Real-World Use Cases | Avoid When |
+|-----------|-------|-----------|-----------------|---------------------------|------------|
+| Polling | Pull | Client -> Server | Depends on poll interval | Basic status checks, simple admin dashboards, low-frequency updates | High scale or near real-time UX is required |
+| Long polling | Pull (held request) | Client -> Server | Near real-time with fewer requests | Chat-like updates when WebSocket is blocked by infrastructure | Very high fanout or mobile battery sensitivity matters |
+| Webhook | Push (event callback) | Server -> Server | Near real-time async | Payment status updates (Stripe-like), order/shipping events, CI/CD callbacks, partner integrations | Consumer endpoint reliability/security is weak |
+| SSE | Push stream over HTTP | Server -> Client | Real-time one-way | Live news tickers, notification feeds, monitoring dashboards, sports scores | Client must send frequent real-time messages back |
+| WebSocket | Full-duplex persistent connection | Bidirectional | Sub-second | Chat, collaborative editing, multiplayer, live reactions, ride tracking | Operational model cannot handle connection state at scale |
+| gRPC streaming | Persistent stream RPC | Uni/Bidirectional | Low latency | Internal service streams (telemetry, log/event pipes, ML feature streams) | Browser-first public API without gateway support |
+| Message queue/stream (Kafka/SQS/PubSub) | Async event bus | Service -> Service | Async eventual | Order pipeline, fanout, retries, decoupled microservices, analytics ingestion | Caller needs immediate synchronous response |
+
+#### When webhook is the right choice
+
+Use webhooks when a producer must notify another system after asynchronous work completes.
+
+Typical examples:
+
+- Payments: `payment.succeeded`, `refund.failed`
+- Commerce: `order.shipped`, `inventory.low`
+- SaaS integrations: `user.invited`, `invoice.paid`
+- Internal platform events: build/deploy completed notifications
+
+Webhook design requirements:
+
+- Sign each event payload (HMAC) and verify signature before processing.
+- Make consumers idempotent using `event_id` dedupe storage.
+- Retry with exponential backoff and dead-letter failed events.
+- Tolerate out-of-order delivery and at-least-once semantics.
+- Version event schemas explicitly (for example `type` + `version`).
+
+#### Recommended combinations in production
+
+Most systems combine mechanisms instead of choosing one:
+
+- REST/GraphQL + polling: simplest baseline for small products.
+- REST/GraphQL + webhooks: best for third-party async integrations.
+- REST/GraphQL + WebSocket: best for end-user realtime experiences.
+- REST/gRPC + Kafka/PubSub: best for resilient internal event-driven workflows.
+- WebSocket + webhook + queue: common in large apps (user realtime + partner callbacks + durable async backend).
+
+#### Quick selection rule
+
+- Need immediate answer to a user action: synchronous REST/GraphQL/gRPC call.
+- Need to inform another service later: webhook or event bus.
+- Need live UI updates from server only: SSE.
+- Need two-way live interaction: WebSocket.
+- Need durable decoupled processing across services: queue/stream.
+
+#### Event delivery lifecycle (API -> queue -> webhook -> retry/DLQ)
+
+```mermaid
+flowchart LR
+  A[Client action: POST /v1/orders]
+  B[Order API]
+  C[(Order DB)]
+  D[[Event Bus / Queue]]
+  E[Webhook Dispatcher]
+  F[Consumer Endpoint]
+  G{2xx ack?}
+  H[Mark delivered]
+  I[Retry with backoff]
+  J[(Dead Letter Queue)]
+
+  A --> B
+  B --> C
+  B -->|publish OrderCreated| D
+  D --> E
+  E -->|POST webhook| F
+  F --> G
+  G -->|Yes| H
+  G -->|No/timeout| I
+  I -->|max retries exceeded| J
+  I -->|retry attempt| E
 ```
 
 ---
