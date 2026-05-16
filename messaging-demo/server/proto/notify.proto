@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package notify;
+
+// One simple domain event: an order status changed.
+// gRPC is great for this internal service-to-service call because:
+//   - schema is enforced (proto3 types, not freeform JSON)
+//   - binary serialisation is faster than JSON
+//   - the client stub is generated — no hand-rolled HTTP calls
+
+service NotifyService {
+  // Unary RPC — same request/response shape as REST but over HTTP/2
+  rpc SendNotification (NotifyRequest) returns (NotifyResponse);
+
+  // Server-streaming RPC — server pushes multiple responses for one request
+  // Mirrors what WebSocket does but with enforced types
+  rpc StreamNotifications (StreamRequest) returns (stream NotifyResponse);
+}
+
+message NotifyRequest {
+  string order_id  = 1;
+  string status    = 2;   // e.g. "completed", "cancelled"
+  string message   = 3;
+}
+
+message NotifyResponse {
+  bool   success   = 1;
+  string detail    = 2;
+}
+
+message StreamRequest {
+  string subscriber_id = 1;   // who is subscribing
+}

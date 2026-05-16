@@ -8,30 +8,30 @@
 
 ### In Scope
 
-| Capability | Critical? |
-|------------|-----------|
-| User registration & auth | Yes |
-| Media upload (photo/video) | Yes — largest payload, most complex |
-| Post creation & deletion | Yes |
-| Home feed retrieval | Yes — highest read traffic |
-| Stories (create, view, expire) | Yes |
-| Follow / Unfollow | Yes — graph write path |
-| Like & Comment | Secondary |
-| Explore / Search | Out of scope |
-| DMs | Out of scope |
-| Reels recommendation | Out of scope |
+| Capability                     | Critical?                           |
+| ------------------------------ | ----------------------------------- |
+| User registration & auth       | Yes                                 |
+| Media upload (photo/video)     | Yes — largest payload, most complex |
+| Post creation & deletion       | Yes                                 |
+| Home feed retrieval            | Yes — highest read traffic          |
+| Stories (create, view, expire) | Yes                                 |
+| Follow / Unfollow              | Yes — graph write path              |
+| Like & Comment                 | Secondary                           |
+| Explore / Search               | Out of scope                        |
+| DMs                            | Out of scope                        |
+| Reels recommendation           | Out of scope                        |
 
 ### Traffic Profile (assumed)
 
-| Metric | Value |
-|--------|-------|
-| DAU | 500 M |
-| Feed reads / DAU | ~20 |
-| Peak feed RPS | ~2 M |
-| Post creates / day | ~100 M |
-| Peak upload RPS | ~1,200 |
-| Latency SLO (feed) | p99 < 200 ms |
-| Latency SLO (upload) | p99 < 5 s |
+| Metric               | Value        |
+| -------------------- | ------------ |
+| DAU                  | 500 M        |
+| Feed reads / DAU     | ~20          |
+| Peak feed RPS        | ~2 M         |
+| Post creates / day   | ~100 M       |
+| Peak upload RPS      | ~1,200       |
+| Latency SLO (feed)   | p99 < 200 ms |
+| Latency SLO (upload) | p99 < 5 s    |
 
 ---
 
@@ -115,26 +115,26 @@ erDiagram
 
 The two objects both reference media, but they are optimized for different product behavior.
 
-| Dimension | Post | Story |
-|-----------|------|-------|
-| Product intent | Durable, profile/feed content | Ephemeral, recent-first content |
-| Lifetime | Persistent until deleted | Expires after 24h (`expires_at`) |
-| Media relationship | One or many media assets (carousel-friendly) | Typically one media asset per story row |
-| Primary reads | Home feed + profile grid + permalinks | Story tray + sequential story viewer |
-| Engagement | Likes/comments/saves with long tail | Views/replies/reactions with short half-life |
+| Dimension          | Post                                         | Story                                        |
+| ------------------ | -------------------------------------------- | -------------------------------------------- |
+| Product intent     | Durable, profile/feed content                | Ephemeral, recent-first content              |
+| Lifetime           | Persistent until deleted                     | Expires after 24h (`expires_at`)             |
+| Media relationship | One or many media assets (carousel-friendly) | Typically one media asset per story row      |
+| Primary reads      | Home feed + profile grid + permalinks        | Story tray + sequential story viewer         |
+| Engagement         | Likes/comments/saves with long tail          | Views/replies/reactions with short half-life |
 
 #### API design perspective
 
 `Post` and `Story` should not share identical API semantics because clients consume them differently.
 
-| API aspect | Post design | Story design |
-|------------|-------------|--------------|
-| Create endpoint | `POST /v1/posts` with `media_ids[]` | `POST /v1/stories` with one `media_id` |
-| Validation | All media must be `ready`; carousel ordering rules apply | Media must be `ready`; enforce max duration and 24h expiry |
-| Read endpoint shape | Rich object for ranking and engagement counts | Lightweight object for fast tray loading and playback |
-| Pagination | Cursor pagination for feed/profile history | Grouped by author and ordered by recency/expiry |
-| Mutability | Caption edits and delete are common | Usually minimal edits; delete/hide is common |
-| Idempotency | Strongly required for create/delete writes | Required for create/view events to prevent double counting |
+| API aspect          | Post design                                              | Story design                                               |
+| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------- |
+| Create endpoint     | `POST /v1/posts` with `media_ids[]`                      | `POST /v1/stories` with one `media_id`                     |
+| Validation          | All media must be `ready`; carousel ordering rules apply | Media must be `ready`; enforce max duration and 24h expiry |
+| Read endpoint shape | Rich object for ranking and engagement counts            | Lightweight object for fast tray loading and playback      |
+| Pagination          | Cursor pagination for feed/profile history               | Grouped by author and ordered by recency/expiry            |
+| Mutability          | Caption edits and delete are common                      | Usually minimal edits; delete/hide is common               |
+| Idempotency         | Strongly required for create/delete writes               | Required for create/view events to prevent double counting |
 
 Recommended contract clarity:
 
@@ -147,28 +147,28 @@ Recommended contract clarity:
 
 The `Story` lifecycle introduces expiration-heavy behavior that impacts storage, caches, and counters differently from `Post`.
 
-| System aspect | Post impact | Story impact |
-|---------------|------------|--------------|
-| Storage model | Durable tables; often normalized via `PostMedia(post_id, media_id, position)` | TTL-aware storage keyed by `expires_at`; fast delete/compaction path |
-| Caching | Feed and profile caches with longer reuse windows | Tray and viewer caches with aggressive invalidation near expiry |
-| Fanout strategy | Feed fanout and ranking pipelines | Recent-first fanout; strict filtering of expired stories |
-| Counters | Like/comment counters with eventual consistency acceptable | View counters are high-volume and bursty; often async event aggregation |
-| CDN usage | Long-lived media URLs and derivative sizes | Short-lived assets and stricter cache-control near expiration |
-| Background jobs | Re-ranking, rehydration, backfills | Expiry sweeper, tombstoning, and archive/cleanup workers |
-| Abuse/moderation | Durable moderation queue and appeals | Real-time moderation SLA is tighter due to 24h window |
+| System aspect    | Post impact                                                                   | Story impact                                                            |
+| ---------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Storage model    | Durable tables; often normalized via `PostMedia(post_id, media_id, position)` | TTL-aware storage keyed by `expires_at`; fast delete/compaction path    |
+| Caching          | Feed and profile caches with longer reuse windows                             | Tray and viewer caches with aggressive invalidation near expiry         |
+| Fanout strategy  | Feed fanout and ranking pipelines                                             | Recent-first fanout; strict filtering of expired stories                |
+| Counters         | Like/comment counters with eventual consistency acceptable                    | View counters are high-volume and bursty; often async event aggregation |
+| CDN usage        | Long-lived media URLs and derivative sizes                                    | Short-lived assets and stricter cache-control near expiration           |
+| Background jobs  | Re-ranking, rehydration, backfills                                            | Expiry sweeper, tombstoning, and archive/cleanup workers                |
+| Abuse/moderation | Durable moderation queue and appeals                                          | Real-time moderation SLA is tighter due to 24h window                   |
 
 #### What parts of the system this affects
 
-| Subsystem | Post responsibility | Story responsibility |
-|----------|---------------------|----------------------|
-| API Gateway | Route durable CRUD + feed reads | Route tray/view APIs and realtime-friendly reads |
-| Media service | Validate multi-media posts and derivatives | Validate single-story media and fast playback variants |
-| Feed service | Rank and paginate posts | Merge story tray ordering and unseen status |
-| Realtime service | Optional for comment/like notifications | Core for rapid story reactions/view updates |
-| Cache layer (Redis) | Feed cursors, profile pages, post metadata | Tray shards, unseen bitsets, short TTL keys |
-| Event bus (Kafka/PubSub) | PostCreated, PostLiked, CommentCreated | StoryCreated, StoryViewed, StoryExpired |
-| Counter service | Like/comment aggregates | View/reaction aggregates at high write rate |
-| Data warehouse/analytics | Long-term content and creator metrics | 24h engagement funnels and completion rates |
+| Subsystem                | Post responsibility                        | Story responsibility                                   |
+| ------------------------ | ------------------------------------------ | ------------------------------------------------------ |
+| API Gateway              | Route durable CRUD + feed reads            | Route tray/view APIs and realtime-friendly reads       |
+| Media service            | Validate multi-media posts and derivatives | Validate single-story media and fast playback variants |
+| Feed service             | Rank and paginate posts                    | Merge story tray ordering and unseen status            |
+| Realtime service         | Optional for comment/like notifications    | Core for rapid story reactions/view updates            |
+| Cache layer (Redis)      | Feed cursors, profile pages, post metadata | Tray shards, unseen bitsets, short TTL keys            |
+| Event bus (Kafka/PubSub) | PostCreated, PostLiked, CommentCreated     | StoryCreated, StoryViewed, StoryExpired                |
+| Counter service          | Like/comment aggregates                    | View/reaction aggregates at high write rate            |
+| Data warehouse/analytics | Long-term content and creator metrics      | 24h engagement funnels and completion rates            |
 
 Design rule:
 
@@ -208,14 +208,14 @@ Authorization: Bearer <access_token>
 
 ### Scopes
 
-| Scope | Grants |
-|-------|--------|
-| `read:feed` | Read own feed and public posts |
-| `write:post` | Create and delete own posts |
-| `write:story` | Create stories |
-| `write:follow` | Follow/unfollow users |
-| `read:profile` | Read any public profile |
-| `write:profile` | Edit own profile |
+| Scope           | Grants                         |
+| --------------- | ------------------------------ |
+| `read:feed`     | Read own feed and public posts |
+| `write:post`    | Create and delete own posts    |
+| `write:story`   | Create stories                 |
+| `write:follow`  | Follow/unfollow users          |
+| `read:profile`  | Read any public profile        |
+| `write:profile` | Edit own profile               |
 
 ---
 
@@ -236,22 +236,22 @@ Authorization: Bearer <access_token>
 
 Most large consumer apps are hybrid. Instagram-like systems usually combine multiple API styles based on traffic shape, latency needs, and client flexibility.
 
-| Style | Best For | Why | Common Tradeoff |
-|-------|----------|-----|-----------------|
-| REST | Public APIs, CRUD flows, stable contracts | Simple, cache-friendly, broad tooling support | Can over-fetch or require multiple round-trips |
-| GraphQL | Client-specific read shapes (feed/profile composition) | Client asks for exact fields; fewer over-fetches | Resolver complexity, query cost control required |
-| WebSocket | Real-time bidirectional features | Low-latency push for live events | Connection/state management complexity |
-| gRPC | Internal service-to-service communication | Strong contracts + high performance over HTTP/2 | Less browser-friendly for direct public clients |
+| Style     | Best For                                               | Why                                              | Common Tradeoff                                  |
+| --------- | ------------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------ |
+| REST      | Public APIs, CRUD flows, stable contracts              | Simple, cache-friendly, broad tooling support    | Can over-fetch or require multiple round-trips   |
+| GraphQL   | Client-specific read shapes (feed/profile composition) | Client asks for exact fields; fewer over-fetches | Resolver complexity, query cost control required |
+| WebSocket | Real-time bidirectional features                       | Low-latency push for live events                 | Connection/state management complexity           |
+| gRPC      | Internal service-to-service communication              | Strong contracts + high performance over HTTP/2  | Less browser-friendly for direct public clients  |
 
 #### Where each style fits in popular app patterns
 
-| App Pattern | Recommended Mix | Why |
-|-------------|-----------------|-----|
-| Social feed app (Instagram/X) | REST + GraphQL + WebSocket + internal gRPC | REST for writes/auth/upload flows, GraphQL for feed shaping, WebSocket for notifications/live interactions, gRPC for internal fanout/ranking/media pipelines |
-| Ride-hailing (Uber-like) | REST + WebSocket + internal gRPC | REST for booking/payment lifecycle, WebSocket for live trip updates, gRPC for dispatch/ETA internals |
-| Chat/messaging (Slack/Discord-like) | REST + WebSocket + internal gRPC | REST for channel/account CRUD, WebSocket for message/presence streams, gRPC for internal message services |
-| E-commerce (Shopify/Amazon-like) | REST + GraphQL + Webhooks + internal gRPC | REST for admin/order/payment APIs, GraphQL for storefront reads, webhooks for async partner events, gRPC internally |
-| Payments/fintech | REST + Webhooks + internal gRPC | REST for broad integrator compatibility, webhooks for async status updates, gRPC for low-latency internal risk/ledger services |
+| App Pattern                         | Recommended Mix                            | Why                                                                                                                                                          |
+| ----------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Social feed app (Instagram/X)       | REST + GraphQL + WebSocket + internal gRPC | REST for writes/auth/upload flows, GraphQL for feed shaping, WebSocket for notifications/live interactions, gRPC for internal fanout/ranking/media pipelines |
+| Ride-hailing (Uber-like)            | REST + WebSocket + internal gRPC           | REST for booking/payment lifecycle, WebSocket for live trip updates, gRPC for dispatch/ETA internals                                                         |
+| Chat/messaging (Slack/Discord-like) | REST + WebSocket + internal gRPC           | REST for channel/account CRUD, WebSocket for message/presence streams, gRPC for internal message services                                                    |
+| E-commerce (Shopify/Amazon-like)    | REST + GraphQL + Webhooks + internal gRPC  | REST for admin/order/payment APIs, GraphQL for storefront reads, webhooks for async partner events, gRPC internally                                          |
+| Payments/fintech                    | REST + Webhooks + internal gRPC            | REST for broad integrator compatibility, webhooks for async status updates, gRPC for low-latency internal risk/ledger services                               |
 
 #### Instagram-specific recommendation
 
@@ -343,15 +343,15 @@ API style and delivery mechanism are different concerns:
 
 #### Delivery mechanism matrix
 
-| Mechanism | Model | Direction | Latency Profile | Best Real-World Use Cases | Avoid When |
-|-----------|-------|-----------|-----------------|---------------------------|------------|
-| Polling | Pull | Client -> Server | Depends on poll interval | Basic status checks, simple admin dashboards, low-frequency updates | High scale or near real-time UX is required |
-| Long polling | Pull (held request) | Client -> Server | Near real-time with fewer requests | Chat-like updates when WebSocket is blocked by infrastructure | Very high fanout or mobile battery sensitivity matters |
-| Webhook | Push (event callback) | Server -> Server | Near real-time async | Payment status updates (Stripe-like), order/shipping events, CI/CD callbacks, partner integrations | Consumer endpoint reliability/security is weak |
-| SSE | Push stream over HTTP | Server -> Client | Real-time one-way | Live news tickers, notification feeds, monitoring dashboards, sports scores | Client must send frequent real-time messages back |
-| WebSocket | Full-duplex persistent connection | Bidirectional | Sub-second | Chat, collaborative editing, multiplayer, live reactions, ride tracking | Operational model cannot handle connection state at scale |
-| gRPC streaming | Persistent stream RPC | Uni/Bidirectional | Low latency | Internal service streams (telemetry, log/event pipes, ML feature streams) | Browser-first public API without gateway support |
-| Message queue/stream (Kafka/SQS/PubSub) | Async event bus | Service -> Service | Async eventual | Order pipeline, fanout, retries, decoupled microservices, analytics ingestion | Caller needs immediate synchronous response |
+| Mechanism                               | Model                             | Direction          | Latency Profile                    | Best Real-World Use Cases                                                                          | Avoid When                                                |
+| --------------------------------------- | --------------------------------- | ------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Polling                                 | Pull                              | Client -> Server   | Depends on poll interval           | Basic status checks, simple admin dashboards, low-frequency updates                                | High scale or near real-time UX is required               |
+| Long polling                            | Pull (held request)               | Client -> Server   | Near real-time with fewer requests | Chat-like updates when WebSocket is blocked by infrastructure                                      | Very high fanout or mobile battery sensitivity matters    |
+| Webhook                                 | Push (event callback)             | Server -> Server   | Near real-time async               | Payment status updates (Stripe-like), order/shipping events, CI/CD callbacks, partner integrations | Consumer endpoint reliability/security is weak            |
+| SSE                                     | Push stream over HTTP             | Server -> Client   | Real-time one-way                  | Live news tickers, notification feeds, monitoring dashboards, sports scores                        | Client must send frequent real-time messages back         |
+| WebSocket                               | Full-duplex persistent connection | Bidirectional      | Sub-second                         | Chat, collaborative editing, multiplayer, live reactions, ride tracking                            | Operational model cannot handle connection state at scale |
+| gRPC streaming                          | Persistent stream RPC             | Uni/Bidirectional  | Low latency                        | Internal service streams (telemetry, log/event pipes, ML feature streams)                          | Browser-first public API without gateway support          |
+| Message queue/stream (Kafka/SQS/PubSub) | Async event bus                   | Service -> Service | Async eventual                     | Order pipeline, fanout, retries, decoupled microservices, analytics ingestion                      | Caller needs immediate synchronous response               |
 
 #### When webhook is the right choice
 
@@ -463,16 +463,16 @@ sequenceDiagram
 
 #### Plain-English definitions used below
 
-| Term | Plain-English definition | Example |
-|------|--------------------------|---------|
-| `pre-signed URL` | A temporary upload link generated by the server so the client can upload directly to storage without sending the file through app servers. | The API returns an S3-style URL valid for 15 minutes, and the mobile app uploads the image bytes straight there. |
-| `idempotency key` | A request ID sent by the client so retrying the same request does not create duplicates. | If the app retries `POST /v1/posts` after a timeout with the same key, the server returns the original post instead of creating a second one. |
-| `transcoding` | Converting uploaded media into formats or sizes that are easier to deliver. | A large video might be converted into multiple resolutions like 1080p and 720p. |
-| `CDN propagation` | The process of making media available through globally distributed edge servers. | After processing, the photo is copied to CDN edges so users in Europe and Asia can fetch it quickly. |
-| `polling` | Repeatedly asking the server whether work is done yet. | The client calls `GET /v1/media/{media_id}` every few seconds until `status=ready`. |
-| `exponential backoff` | Waiting longer between retries after each failed or incomplete attempt. | Poll after 0.5 s, then 1 s, then 2 s, then 4 s instead of hammering the server. |
-| `422 Unprocessable Entity` | The request is structurally valid, but the action cannot be completed because the data is not in the right state. | `POST /v1/posts` with a `media_id` that is still processing returns `422`. |
-| `atomic` | All required pieces are committed together or not at all, so partial completion is avoided. | A post should not be created unless all referenced media files are already ready to serve. |
+| Term                       | Plain-English definition                                                                                                                   | Example                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pre-signed URL`           | A temporary upload link generated by the server so the client can upload directly to storage without sending the file through app servers. | The API returns an S3-style URL valid for 15 minutes, and the mobile app uploads the image bytes straight there.                              |
+| `idempotency key`          | A request ID sent by the client so retrying the same request does not create duplicates.                                                   | If the app retries `POST /v1/posts` after a timeout with the same key, the server returns the original post instead of creating a second one. |
+| `transcoding`              | Converting uploaded media into formats or sizes that are easier to deliver.                                                                | A large video might be converted into multiple resolutions like 1080p and 720p.                                                               |
+| `CDN propagation`          | The process of making media available through globally distributed edge servers.                                                           | After processing, the photo is copied to CDN edges so users in Europe and Asia can fetch it quickly.                                          |
+| `polling`                  | Repeatedly asking the server whether work is done yet.                                                                                     | The client calls `GET /v1/media/{media_id}` every few seconds until `status=ready`.                                                           |
+| `exponential backoff`      | Waiting longer between retries after each failed or incomplete attempt.                                                                    | Poll after 0.5 s, then 1 s, then 2 s, then 4 s instead of hammering the server.                                                               |
+| `422 Unprocessable Entity` | The request is structurally valid, but the action cannot be completed because the data is not in the right state.                          | `POST /v1/posts` with a `media_id` that is still processing returns `422`.                                                                    |
+| `atomic`                   | All required pieces are committed together or not at all, so partial completion is avoided.                                                | A post should not be created unless all referenced media files are already ready to serve.                                                    |
 
 #### Example latency budget for upload and post creation
 
@@ -483,15 +483,15 @@ Unlike feed retrieval, upload latency is split into two very different parts:
 
 Example target budget for a photo upload:
 
-| Step | Target Budget | What happens here |
-|------|---------------|-------------------|
-| Initiate upload API | 50 ms | Authenticate user, create upload job, mint pre-signed URL |
-| Client binary upload | 500 ms to 3 s | Client uploads bytes directly to storage |
-| Media validation | 50 ms | Verify file metadata, ownership, and upload completeness |
-| Processing/transcoding | 200 ms to 1.5 s | Generate resized images or transcode video variants |
-| CDN propagation | 50 ms to 300 ms | Make asset reachable through edge delivery path |
-| Final status read | 20 ms | Client polls or receives webhook that media is ready |
-| Create post API | 50 ms | Validate `media_id` state and commit post metadata |
+| Step                   | Target Budget   | What happens here                                         |
+| ---------------------- | --------------- | --------------------------------------------------------- |
+| Initiate upload API    | 50 ms           | Authenticate user, create upload job, mint pre-signed URL |
+| Client binary upload   | 500 ms to 3 s   | Client uploads bytes directly to storage                  |
+| Media validation       | 50 ms           | Verify file metadata, ownership, and upload completeness  |
+| Processing/transcoding | 200 ms to 1.5 s | Generate resized images or transcode video variants       |
+| CDN propagation        | 50 ms to 300 ms | Make asset reachable through edge delivery path           |
+| Final status read      | 20 ms           | Client polls or receives webhook that media is ready      |
+| Create post API        | 50 ms           | Validate `media_id` state and commit post metadata        |
 
 Total user-perceived time for a photo: often about `1 s to 5 s p99`
 
@@ -547,10 +547,10 @@ Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
-| Field | Notes |
-|-------|-------|
-| `upload_url` | Pre-signed URL, single-use, valid for 15 min |
-| `media_id` | Already provisioned; POST /v1/posts can reference it once `status=ready` |
+| Field        | Notes                                                                    |
+| ------------ | ------------------------------------------------------------------------ |
+| `upload_url` | Pre-signed URL, single-use, valid for 15 min                             |
+| `media_id`   | Already provisioned; POST /v1/posts can reference it once `status=ready` |
 
 ### 5.3 Upload Binary Payload
 
@@ -644,14 +644,14 @@ Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 
 ### 5.6 Edge Cases & Failure Modes
 
-| Scenario | Behavior |
-|----------|----------|
+| Scenario                                   | Behavior                                                        |
+| ------------------------------------------ | --------------------------------------------------------------- |
 | `media_id` still `processing` at POST time | `422 Unprocessable Entity` with `{ "code": "media_not_ready" }` |
-| `media_id` belongs to another user | `403 Forbidden` |
-| `media_id` in `failed` status | `422` with `{ "code": "media_processing_failed" }` |
-| Upload URL expired | `410 Gone` on PUT; client must call initiate upload again |
-| Duplicate `Idempotency-Key` within 24h | Returns the original 201 response, no duplicate post |
-| Caption exceeds 2200 chars | `400 Bad Request` with field-level detail |
+| `media_id` belongs to another user         | `403 Forbidden`                                                 |
+| `media_id` in `failed` status              | `422` with `{ "code": "media_processing_failed" }`              |
+| Upload URL expired                         | `410 Gone` on PUT; client must call initiate upload again       |
+| Duplicate `Idempotency-Key` within 24h     | Returns the original 201 response, no duplicate post            |
+| Caption exceeds 2200 chars                 | `400 Bad Request` with field-level detail                       |
 
 ---
 
@@ -679,26 +679,26 @@ flowchart TD
 
 #### Plain-English definitions used below
 
-| Term | Plain-English definition | Example |
-|------|--------------------------|---------|
-| `p99 latency` | The response time under which 99% of requests finish. Only the slowest 1% are worse. | If feed `p99` is 200 ms, then 99 out of 100 feed requests finish in 200 ms or less. |
-| `adjacency list` | A stored list of direct relationships for one node in a graph. Here, it usually means “who a user follows” or “who follows a user.” | Alice's follow adjacency list might be `[bob, carol, dave]`. |
-| `candidate generation` | The stage that picks a manageable shortlist of posts worth scoring. | From 1,200 followees, the system may narrow to 550 candidate posts before ranking. |
-| `strong ties` | Authors the viewer interacts with a lot, so their content is more likely to matter. | Alice likes Bob often, so Bob becomes a strong tie. |
-| `exploration` | Content shown outside the user's direct follow graph to help discovery. | Alice follows no travel creators, but the system may still show one popular travel post. |
-| `heuristic` | A simple rule-of-thumb formula used before or instead of a learned model. | “Prefer recent posts with high engagement and strong affinity” is a heuristic. |
-| `feature store` | A system that serves prepared ranking inputs quickly to online services. | The ranking service may fetch Alice's topic interests and Bob's recent engagement rate from a feature store. |
-| `affinity` | A score for how strong the relationship is between viewer and author. | If Alice often watches Bob's stories and likes his posts, `affinity(alice, bob)` is high. |
-| `fatigue` | A penalty for showing too much content from the same author too often. | If Alice already saw two Bob posts recently, Bob's next post gets a fatigue penalty. |
-| `freshness` | How recent a post is, usually normalized so newer content scores higher. | A post from 8 minutes ago has higher freshness than one from 2 days ago. |
-| `engagement velocity` | How quickly likes, comments, saves, or shares are arriving right now. | 500 likes in 10 minutes is higher engagement velocity than 500 likes over 2 days. |
-| `re-rank` | A second pass that adjusts the initial ranked list using layout or policy rules. | Even if Bob has the top 2 posts by score, reranking may move Carol into slot 2 for diversity. |
-| `nearline` | Processing that is not fully real-time but updates frequently, often every few seconds or minutes. | Like counts may be refreshed every 30 seconds and used by ranking as nearline signals. |
-| `fanout-on-write` | Push a new post into many followers' feed caches when the post is created. | When Bob posts, the system inserts Bob's post ID into Alice's feed cache immediately. |
-| `fanout-on-read` | Do not push on write; instead merge an author's posts into the feed when the viewer requests it. | For a celebrity with 50 million followers, the system merges recent posts at read time instead of writing to all 50 million feeds. |
-| `write amplification` | One logical write causes many physical writes in storage or cache. | One celebrity post might trigger millions of feed-cache writes if handled naively. |
-| `eventual consistency` | Data may be briefly stale, but it becomes correct after propagation finishes. | Alice likes a post, but `like_count` may update 2 seconds later instead of instantly. |
-| `idempotent` | Repeating the same operation produces the same final result instead of duplicating it. | Retrying “like post 123” should still leave exactly one like from Alice. |
+| Term                   | Plain-English definition                                                                                                            | Example                                                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `p99 latency`          | The response time under which 99% of requests finish. Only the slowest 1% are worse.                                                | If feed `p99` is 200 ms, then 99 out of 100 feed requests finish in 200 ms or less.                                                |
+| `adjacency list`       | A stored list of direct relationships for one node in a graph. Here, it usually means “who a user follows” or “who follows a user.” | Alice's follow adjacency list might be `[bob, carol, dave]`.                                                                       |
+| `candidate generation` | The stage that picks a manageable shortlist of posts worth scoring.                                                                 | From 1,200 followees, the system may narrow to 550 candidate posts before ranking.                                                 |
+| `strong ties`          | Authors the viewer interacts with a lot, so their content is more likely to matter.                                                 | Alice likes Bob often, so Bob becomes a strong tie.                                                                                |
+| `exploration`          | Content shown outside the user's direct follow graph to help discovery.                                                             | Alice follows no travel creators, but the system may still show one popular travel post.                                           |
+| `heuristic`            | A simple rule-of-thumb formula used before or instead of a learned model.                                                           | “Prefer recent posts with high engagement and strong affinity” is a heuristic.                                                     |
+| `feature store`        | A system that serves prepared ranking inputs quickly to online services.                                                            | The ranking service may fetch Alice's topic interests and Bob's recent engagement rate from a feature store.                       |
+| `affinity`             | A score for how strong the relationship is between viewer and author.                                                               | If Alice often watches Bob's stories and likes his posts, `affinity(alice, bob)` is high.                                          |
+| `fatigue`              | A penalty for showing too much content from the same author too often.                                                              | If Alice already saw two Bob posts recently, Bob's next post gets a fatigue penalty.                                               |
+| `freshness`            | How recent a post is, usually normalized so newer content scores higher.                                                            | A post from 8 minutes ago has higher freshness than one from 2 days ago.                                                           |
+| `engagement velocity`  | How quickly likes, comments, saves, or shares are arriving right now.                                                               | 500 likes in 10 minutes is higher engagement velocity than 500 likes over 2 days.                                                  |
+| `re-rank`              | A second pass that adjusts the initial ranked list using layout or policy rules.                                                    | Even if Bob has the top 2 posts by score, reranking may move Carol into slot 2 for diversity.                                      |
+| `nearline`             | Processing that is not fully real-time but updates frequently, often every few seconds or minutes.                                  | Like counts may be refreshed every 30 seconds and used by ranking as nearline signals.                                             |
+| `fanout-on-write`      | Push a new post into many followers' feed caches when the post is created.                                                          | When Bob posts, the system inserts Bob's post ID into Alice's feed cache immediately.                                              |
+| `fanout-on-read`       | Do not push on write; instead merge an author's posts into the feed when the viewer requests it.                                    | For a celebrity with 50 million followers, the system merges recent posts at read time instead of writing to all 50 million feeds. |
+| `write amplification`  | One logical write causes many physical writes in storage or cache.                                                                  | One celebrity post might trigger millions of feed-cache writes if handled naively.                                                 |
+| `eventual consistency` | Data may be briefly stale, but it becomes correct after propagation finishes.                                                       | Alice likes a post, but `like_count` may update 2 seconds later instead of instantly.                                              |
+| `idempotent`           | Repeating the same operation produces the same final result instead of duplicating it.                                              | Retrying “like post 123” should still leave exactly one like from Alice.                                                           |
 
 ### 6.1.1 Ranking and Graph Services
 
@@ -748,11 +748,11 @@ Assume viewer `alice` follows `bob`, `carol`, and `dave`. Over the last 7 days:
 
 The graph service can convert this raw relationship history into feed-ready edge features:
 
-| Author | follows | close_friend | muted | interaction_count_7d | last_interaction_at | Derived intuition |
-|--------|---------|--------------|-------|----------------------|---------------------|-------------------|
-| Bob | true | false | false | 18 | 2h ago | Strong positive affinity |
-| Carol | true | false | false | 2 | 5d ago | Weak but valid follow edge |
-| Dave | true | false | true | 9 | 1d ago | Relationship exists, but muted should filter or heavily demote |
+| Author | follows | close_friend | muted | interaction_count_7d | last_interaction_at | Derived intuition                                              |
+| ------ | ------- | ------------ | ----- | -------------------- | ------------------- | -------------------------------------------------------------- |
+| Bob    | true    | false        | false | 18                   | 2h ago              | Strong positive affinity                                       |
+| Carol  | true    | false        | false | 2                    | 5d ago              | Weak but valid follow edge                                     |
+| Dave   | true    | false        | true  | 9                    | 1d ago              | Relationship exists, but muted should filter or heavily demote |
 
 The ranking service may then derive normalized features such as:
 
@@ -912,14 +912,14 @@ Worked example for one candidate post:
 
 Assume viewer `alice` follows author `bob` and the ranking pipeline computes these normalized features for Bob's new photo post:
 
-| Feature | Value | Why it is high/low |
-|---------|-------|--------------------|
-| `affinity(viewer, author)` | 0.90 | Alice frequently likes Bob's posts and watches his stories |
-| `engagement(post)` | 0.70 | The post is getting likes/comments quickly for its age |
-| `freshness(post)` | 0.95 | The post is only 8 minutes old |
-| `media_quality(post)` | 0.80 | High-resolution image and historically good completion rate |
-| `fatigue(viewer, author)` | 0.30 | Alice already saw one Bob post recently |
-| `negative_feedback(viewer, author, post)` | 0.05 | Alice rarely hides Bob's content |
+| Feature                                   | Value | Why it is high/low                                          |
+| ----------------------------------------- | ----- | ----------------------------------------------------------- |
+| `affinity(viewer, author)`                | 0.90  | Alice frequently likes Bob's posts and watches his stories  |
+| `engagement(post)`                        | 0.70  | The post is getting likes/comments quickly for its age      |
+| `freshness(post)`                         | 0.95  | The post is only 8 minutes old                              |
+| `media_quality(post)`                     | 0.80  | High-resolution image and historically good completion rate |
+| `fatigue(viewer, author)`                 | 0.30  | Alice already saw one Bob post recently                     |
+| `negative_feedback(viewer, author, post)` | 0.05  | Alice rarely hides Bob's content                            |
 
 If the heuristic stage uses weights:
 
@@ -951,10 +951,10 @@ Worked comparison across multiple candidate posts:
 Suppose Alice's candidate pool currently contains three posts:
 
 | Post | Author | Affinity | Engagement | Freshness | Media Quality | Fatigue | Negative Feedback |
-|------|--------|----------|------------|-----------|---------------|---------|-------------------|
-| P1 | Bob | 0.90 | 0.70 | 0.95 | 0.80 | 0.30 | 0.05 |
-| P2 | Carol | 0.35 | 0.92 | 0.85 | 0.75 | 0.05 | 0.02 |
-| P3 | Erin | 0.20 | 0.98 | 0.60 | 0.90 | 0.00 | 0.01 |
+| ---- | ------ | -------- | ---------- | --------- | ------------- | ------- | ----------------- |
+| P1   | Bob    | 0.90     | 0.70       | 0.95      | 0.80          | 0.30    | 0.05              |
+| P2   | Carol  | 0.35     | 0.92       | 0.85      | 0.75          | 0.05    | 0.02              |
+| P3   | Erin   | 0.20     | 0.98       | 0.60      | 0.90          | 0.00    | 0.01              |
 
 Using the same heuristic weights as above:
 
@@ -1136,16 +1136,16 @@ Design these services to degrade gracefully:
 
 To keep feed `p99 < 200 ms`, the online path needs an explicit latency budget.
 
-| Step | Target Budget | What happens here |
-|------|---------------|-------------------|
-| API Gateway auth + request parsing | 10 ms | Validate token, parse cursor, route request |
-| Feed cache lookup | 10 ms | Check whether a pre-built timeline is available in Redis |
-| Candidate generation | 25 ms | Pull candidate post IDs from feed cache, followee buckets, and optional exploration source |
-| Graph + feature fetch | 35 ms | Fetch edge features, counters, and viewer/post features |
-| Ranking model score | 20 ms | Score the candidate set |
-| Diversity re-rank | 10 ms | Apply author diversity and freshness constraints |
-| Hydration + serialization | 25 ms | Load final post/media objects and build JSON response |
-| Network + safety margin | 65 ms | Tail latency buffer for queueing, retries, and unavoidable variance |
+| Step                               | Target Budget | What happens here                                                                          |
+| ---------------------------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| API Gateway auth + request parsing | 10 ms         | Validate token, parse cursor, route request                                                |
+| Feed cache lookup                  | 10 ms         | Check whether a pre-built timeline is available in Redis                                   |
+| Candidate generation               | 25 ms         | Pull candidate post IDs from feed cache, followee buckets, and optional exploration source |
+| Graph + feature fetch              | 35 ms         | Fetch edge features, counters, and viewer/post features                                    |
+| Ranking model score                | 20 ms         | Score the candidate set                                                                    |
+| Diversity re-rank                  | 10 ms         | Apply author diversity and freshness constraints                                           |
+| Hydration + serialization          | 25 ms         | Load final post/media objects and build JSON response                                      |
+| Network + safety margin            | 65 ms         | Tail latency buffer for queueing, retries, and unavoidable variance                        |
 
 Total target: about `200 ms p99`
 
@@ -1188,10 +1188,10 @@ Authorization: Bearer <token>
 
 **Query Parameters**
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | int | 20 | Items per page (max 50) |
-| `cursor` | string | — | Opaque pagination cursor from previous response |
+| Param    | Type   | Default | Description                                     |
+| -------- | ------ | ------- | ----------------------------------------------- |
+| `limit`  | int    | 20      | Items per page (max 50)                         |
+| `cursor` | string | —       | Opaque pagination cursor from previous response |
 
 ### 6.3 Example Request
 
@@ -1288,13 +1288,13 @@ X-RateLimit-Reset: 1715790060
 
 ### 6.7 Edge Cases & Failure Modes
 
-| Scenario | Behavior |
-|----------|----------|
-| Cursor from a different user's session | `400 Bad Request` `{ "code": "invalid_cursor" }` |
-| Cursor older than 24h (feed refreshed) | Return fresh feed from top, `pagination.cursor_expired: true` |
-| Feed cache miss (cold start / new user) | Synchronous fan-in from followee post tables, slightly higher latency |
-| Followee with 0 posts | Their posts simply absent from items |
-| Private account the caller doesn't follow | Posts excluded server-side |
+| Scenario                                  | Behavior                                                              |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| Cursor from a different user's session    | `400 Bad Request` `{ "code": "invalid_cursor" }`                      |
+| Cursor older than 24h (feed refreshed)    | Return fresh feed from top, `pagination.cursor_expired: true`         |
+| Feed cache miss (cold start / new user)   | Synchronous fan-in from followee post tables, slightly higher latency |
+| Followee with 0 posts                     | Their posts simply absent from items                                  |
+| Private account the caller doesn't follow | Posts excluded server-side                                            |
 
 ---
 
@@ -1491,32 +1491,32 @@ All collection endpoints use **cursor-based pagination**:
 
 **Standard status codes used**
 
-| Code | When |
-|------|------|
-| `200` | Successful read or update |
-| `201` | Resource created |
-| `202` | Async job accepted |
-| `204` | Successful delete or fire-and-forget write |
-| `400` | Malformed request or validation failure |
-| `401` | Missing or invalid token |
-| `403` | Valid token, insufficient permission |
-| `404` | Resource not found (or intentionally hidden) |
-| `409` | Conflict (duplicate, already followed) |
-| `410` | Gone (upload URL expired) |
-| `422` | Semantically invalid (media not ready) |
-| `429` | Rate limit exceeded |
-| `500` | Unexpected server error |
+| Code  | When                                                   |
+| ----- | ------------------------------------------------------ |
+| `200` | Successful read or update                              |
+| `201` | Resource created                                       |
+| `202` | Async job accepted                                     |
+| `204` | Successful delete or fire-and-forget write             |
+| `400` | Malformed request or validation failure                |
+| `401` | Missing or invalid token                               |
+| `403` | Valid token, insufficient permission                   |
+| `404` | Resource not found (or intentionally hidden)           |
+| `409` | Conflict (duplicate, already followed)                 |
+| `410` | Gone (upload URL expired)                              |
+| `422` | Semantically invalid (media not ready)                 |
+| `429` | Rate limit exceeded                                    |
+| `500` | Unexpected server error                                |
 | `503` | Temporary overload — retry after `Retry-After` seconds |
 
 ### 9.3 Rate Limiting
 
-| Token class | Endpoint group | Limit |
-|------------|----------------|-------|
-| User token | `GET /v1/feed` | 200 req/min |
-| User token | `POST /v1/posts` | 10 req/hour |
-| User token | `POST /v1/media/uploads` | 20 req/hour |
-| User token | `POST /v1/users/*/follow` | 100 req/hour |
-| User token | All other reads | 500 req/min |
+| Token class | Endpoint group            | Limit        |
+| ----------- | ------------------------- | ------------ |
+| User token  | `GET /v1/feed`            | 200 req/min  |
+| User token  | `POST /v1/posts`          | 10 req/hour  |
+| User token  | `POST /v1/media/uploads`  | 20 req/hour  |
+| User token  | `POST /v1/users/*/follow` | 100 req/hour |
+| User token  | All other reads           | 500 req/min  |
 
 When exceeded:
 
@@ -1567,15 +1567,15 @@ Signature: `X-Instagram-Signature: sha256=<HMAC-SHA256(secret, raw_body)>`
 
 ## 10. Design Decisions & Trade-offs
 
-| Decision | Rationale | Trade-off |
-|----------|-----------|-----------|
-| Two-phase upload (initiate → PUT → create post) | Decouples auth from binary transfer; upload URL can be routed to edge without hitting app servers | More round-trips for the client |
-| Pre-signed upload URLs | No auth headers on the binary PUT; simpler CDN routing | URL can be intercepted (mitigated by 15-min expiry + single-use) |
-| Denormalized `like_count` / `comment_count` on Post | Avoids expensive COUNT queries on every feed read | Eventual consistency — counts may lag by seconds |
-| Cursor pagination for feed | Stable under live inserts; O(log N) | Client cannot jump to arbitrary page |
-| Fan-out on write (small accounts) | Feed reads are O(1) cache hit | Write amplification for users with many followers → hybrid strategy |
-| `204` on DELETE follow | Idempotent; client doesn't need to handle "already deleted" | Cannot distinguish "never followed" from "just unfollowed" |
-| `status: pending` on private follow | Correct UX — user knows request sent | Follow graph writes need to handle async approval event |
+| Decision                                            | Rationale                                                                                         | Trade-off                                                           |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Two-phase upload (initiate → PUT → create post)     | Decouples auth from binary transfer; upload URL can be routed to edge without hitting app servers | More round-trips for the client                                     |
+| Pre-signed upload URLs                              | No auth headers on the binary PUT; simpler CDN routing                                            | URL can be intercepted (mitigated by 15-min expiry + single-use)    |
+| Denormalized `like_count` / `comment_count` on Post | Avoids expensive COUNT queries on every feed read                                                 | Eventual consistency — counts may lag by seconds                    |
+| Cursor pagination for feed                          | Stable under live inserts; O(log N)                                                               | Client cannot jump to arbitrary page                                |
+| Fan-out on write (small accounts)                   | Feed reads are O(1) cache hit                                                                     | Write amplification for users with many followers → hybrid strategy |
+| `204` on DELETE follow                              | Idempotent; client doesn't need to handle "already deleted"                                       | Cannot distinguish "never followed" from "just unfollowed"          |
+| `status: pending` on private follow                 | Correct UX — user knows request sent                                                              | Follow graph writes need to handle async approval event             |
 
 ---
 
@@ -1583,22 +1583,22 @@ Signature: `X-Instagram-Signature: sha256=<HMAC-SHA256(secret, raw_body)>`
 
 As the product grows, different subsystems become the bottleneck at different times. This table summarizes what usually breaks first, what signal tells you it is time to change the design, and the common scaling response.
 
-| Subsystem | Typical bottleneck | Scaling trigger to watch | Common mitigation |
-|-----------|--------------------|--------------------------|-------------------|
-| API Gateway | CPU, auth verification, request fan-in | Rising gateway p99, auth CPU saturation, high 429/503 rate | Add stateless horizontal scaling, cache auth metadata, split read/write traffic |
-| Media upload path | Network throughput and object-storage ingress | Upload p99 increases with file size or mobile traffic spikes | Keep direct-to-storage upload, add regional upload edges, rate-limit abusive uploaders |
-| Media processing pipeline | CPU/GPU/transcoder worker saturation | Processing queue lag grows, `media.status=processing` lasts too long | Autoscale workers, separate photo and video queues, prioritize short jobs |
-| CDN/media delivery | Cache miss rate and origin egress | Origin traffic spikes, CDN hit ratio drops, high geographic latency | Add more CDN caching, generate better derivatives, pre-warm hot assets |
-| Feed cache (Redis) | Memory pressure and hot keys | Evictions rise, cache miss rate climbs, hot users dominate traffic | Shard timelines, cap feed length, move celebrities to fanout-on-read |
-| Candidate generation | Too many raw posts to prune quickly | Candidate generation exceeds latency budget, feature-store load spikes | Tighten per-author caps, shorten freshness window, reduce exploration budget |
-| Graph service | Large adjacency lists and hot-followee lookups | Follow graph lookups slow for power users or celebrities | Precompute hot adjacency lists, shard by user, cache strong ties separately |
-| Ranking service | Feature fetch cost and scorer latency | Ranking p95/p99 grows with candidate count | Reduce candidate pool, cache hot features, use lighter online model |
-| Counter service | Hot-post write concentration | Viral posts create write hotspots or delayed like/view counts | Use sharded counters, async aggregation, batch flushes |
-| Fanout workers | Write amplification on large-follower posts | Fanout queue lag increases, follower timelines become stale | Switch large authors to fanout-on-read, batch writes, partition by author |
-| Story tray/view pipeline | High write rate for view events | Story view lag or unseen-status lag grows at peak | Aggregate views asynchronously, TTL caches aggressively, compress viewer state |
-| Follow graph writes | Contention on relationship updates | Follow/unfollow spikes cause slow writes or approval lag | Queue non-critical side effects, isolate approval workflow, batch secondary updates |
-| Notification/realtime service | Connection fanout and state tracking | WebSocket connection count or push delay climbs | Partition connections by user, offload fanout to event bus, degrade to polling/SSE when needed |
-| Databases | Read/write hotspotting and index pressure | Slow queries, replication lag, storage hot partitions | Add read replicas, reshard hot tables, denormalize read models |
+| Subsystem                     | Typical bottleneck                             | Scaling trigger to watch                                               | Common mitigation                                                                              |
+| ----------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| API Gateway                   | CPU, auth verification, request fan-in         | Rising gateway p99, auth CPU saturation, high 429/503 rate             | Add stateless horizontal scaling, cache auth metadata, split read/write traffic                |
+| Media upload path             | Network throughput and object-storage ingress  | Upload p99 increases with file size or mobile traffic spikes           | Keep direct-to-storage upload, add regional upload edges, rate-limit abusive uploaders         |
+| Media processing pipeline     | CPU/GPU/transcoder worker saturation           | Processing queue lag grows, `media.status=processing` lasts too long   | Autoscale workers, separate photo and video queues, prioritize short jobs                      |
+| CDN/media delivery            | Cache miss rate and origin egress              | Origin traffic spikes, CDN hit ratio drops, high geographic latency    | Add more CDN caching, generate better derivatives, pre-warm hot assets                         |
+| Feed cache (Redis)            | Memory pressure and hot keys                   | Evictions rise, cache miss rate climbs, hot users dominate traffic     | Shard timelines, cap feed length, move celebrities to fanout-on-read                           |
+| Candidate generation          | Too many raw posts to prune quickly            | Candidate generation exceeds latency budget, feature-store load spikes | Tighten per-author caps, shorten freshness window, reduce exploration budget                   |
+| Graph service                 | Large adjacency lists and hot-followee lookups | Follow graph lookups slow for power users or celebrities               | Precompute hot adjacency lists, shard by user, cache strong ties separately                    |
+| Ranking service               | Feature fetch cost and scorer latency          | Ranking p95/p99 grows with candidate count                             | Reduce candidate pool, cache hot features, use lighter online model                            |
+| Counter service               | Hot-post write concentration                   | Viral posts create write hotspots or delayed like/view counts          | Use sharded counters, async aggregation, batch flushes                                         |
+| Fanout workers                | Write amplification on large-follower posts    | Fanout queue lag increases, follower timelines become stale            | Switch large authors to fanout-on-read, batch writes, partition by author                      |
+| Story tray/view pipeline      | High write rate for view events                | Story view lag or unseen-status lag grows at peak                      | Aggregate views asynchronously, TTL caches aggressively, compress viewer state                 |
+| Follow graph writes           | Contention on relationship updates             | Follow/unfollow spikes cause slow writes or approval lag               | Queue non-critical side effects, isolate approval workflow, batch secondary updates            |
+| Notification/realtime service | Connection fanout and state tracking           | WebSocket connection count or push delay climbs                        | Partition connections by user, offload fanout to event bus, degrade to polling/SSE when needed |
+| Databases                     | Read/write hotspotting and index pressure      | Slow queries, replication lag, storage hot partitions                  | Add read replicas, reshard hot tables, denormalize read models                                 |
 
 How to use this table in an interview:
 
