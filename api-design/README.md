@@ -27,6 +27,22 @@ Each document answers:
 |---|-----|------------------------|
 | [01](./01-instagram-api-design.md) | **Instagram** | Post creation, Feed retrieval, Stories, Follow graph, Media upload |
 | [02](./02-uber-api-design.md) | **Uber** | Ride request, Driver matching, Trip tracking, Fare estimation, Payment |
+| [03](./03-figma-api-design.md) | **Figma** | File load, Realtime collaboration, Presence, Comments, Version snapshots |
+| [04](./04-google-docs-api-design.md) | **Google Docs** | Document hydrate, Co-editing, Suggestions, Comments, Revision history |
+| [05](./05-whatsapp-api-design.md) | **WhatsApp** | Message send/delivery, Receipts, Reconnect sync, Group fan-out |
+| [06](./06-youtube-api-design.md) | **YouTube** | Upload-to-watchable pipeline, Playback manifests, Home feed, Engagement |
+| [07](./07-spotify-api-design.md) | **Spotify** | Catalog lookup, Playback control, Multi-device sync, Recommendations |
+| [08](./08-netflix-api-design.md) | **Netflix** | Home rows, Playback authorization, Adaptive streaming, Progress sync |
+| [09](./09-twitter-api-design.md) | **Twitter/X** | Tweet publish, Timeline ranking, Engagement writes, Notifications |
+| [10](./10-discord-api-design.md) | **Discord** | Channel messaging, Realtime gateway, Presence, Voice signaling |
+| [11](./11-stripe-api-design.md) | **Stripe** | Payment intent lifecycle, Idempotent writes, Webhooks, Reconciliation |
+| [12](./12-dropbox-api-design.md) | **Dropbox** | Resumable upload, Delta sync, Long-poll updates, Conflict handling |
+| [13](./13-slack-api-design.md) | **Slack** | Workspace messaging, Realtime events, App events, Thread/history retrieval |
+| [14](./14-chatgpt-api-design.md) | **ChatGPT** | Chat runs, Token streaming, Tool calls, Conversation state |
+| [15](./15-github-copilot-api-design.md) | **GitHub Copilot** | Context assembly, Completion streaming, Policy filtering, Feedback loop |
+| [16](./16-perplexity-api-design.md) | **Perplexity** | Query planning, Retrieval/rerank, Citation-backed answers, Follow-ups |
+| [17](./17-zoom-api-design.md) | **Zoom** | Meeting create/join, Signaling, Media session flow, Recording lifecycle |
+| [18](./18-ai-recommendation-api-design.md) | **AI Recommendation** | Candidate generation, Ranking, Event ingestion, Model/feature freshness |
 
 ---
 
