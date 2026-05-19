@@ -50,6 +50,18 @@ This directory contains comprehensive guides for essential system design concept
 29. [Distributed Locking](./29-distributed-locking.md) - Coordinating distributed operations
 30. [Checksum](./30-checksum.md) - Data integrity verification
 
+### Reliability, Security & Operations (New)
+53. [Authentication and Authorization](./53-authentication-and-authorization.md) - Identity, access control, and token strategy
+54. [Observability and SRE Fundamentals](./54-observability-and-sre-fundamentals.md) - SLOs, alerts, and production visibility
+55. [Multi-Region and Disaster Recovery](./55-multi-region-and-disaster-recovery.md) - Regional resilience and failover design
+56. [Event-Driven Architecture and Pub/Sub](./56-event-driven-architecture-and-pubsub.md) - Asynchronous decoupling and event design
+57. [Saga, Outbox, and Distributed Transactions](./57-saga-outbox-and-distributed-transactions.md) - Reliable cross-service workflows
+58. [Backpressure, Load Shedding, and Graceful Degradation](./58-backpressure-load-shedding-and-graceful-degradation.md) - Surviving overload conditions
+59. [Data Modeling and Schema Evolution](./59-data-modeling-and-schema-evolution.md) - Modeling for scale and safe migrations
+60. [Service Discovery, Config, and Feature Flags](./60-service-discovery-config-and-feature-flags.md) - Runtime control and safer rollouts
+61. [Search System Design](./61-search-system-design.md) - Indexing and ranking architecture
+62. [Security for System Design](./62-security-for-system-design.md) - Threat modeling and defense in depth
+
 ### Advanced Walkthroughs & Playbooks
 - [Comprehensive API Design Playbook](./42-comprehensive-api-design-playbook.md) - End-to-end API design for interviews and production
 
@@ -65,9 +77,19 @@ Each topic file contains:
 
 ## 🚀 Learning Path
 
-**Beginner**: Start with topics 1-6 (Core concepts)  
-**Intermediate**: Progress through topics 7-16 (Performance & infrastructure)  
-**Advanced**: Master topics 17-30 (Distributed systems & scaling)
+**Beginner**: Start with topics 1-10 (Core performance, data, and protection basics)  
+**Intermediate**: Progress through topics 11-21 (resilience, scaling, and partitioning)  
+**Advanced**: Master topics 22-30 (communication and distributed coordination)  
+**Expert Foundations**: Add topics 53-57 (auth, observability, DR, eventing, distributed workflows)  
+**Expert Systems**: Finish with topics 58-62 (overload handling, schema evolution, runtime control, search, security)
+
+### Suggested Full Order (01-62)
+
+1. 1-10: Core metrics, consistency, caching, and traffic control
+2. 11-21: Fault tolerance and data scaling primitives
+3. 22-30: Communication and distributed systems mechanics
+4. 53-57: Production reliability and correctness patterns
+5. 58-62: Operational maturity and secure large-scale architecture
 
 ## 📖 Additional Resources
 
@@ -77,4 +99,4 @@ Each topic file contains:
 
 ---
 
-*Last updated: February 2026*
+*Last updated: May 2026*
