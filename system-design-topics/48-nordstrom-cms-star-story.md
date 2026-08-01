@@ -17,7 +17,7 @@ The decision was made to migrate to Sanity as the headless CMS. My role was to d
 
 ### Task
 
-As the staff engineer on the Content Platform team, I was responsible for the architecture of the entire content delivery system: how published content flows from Sanity to the Nordstrom and NordstromRack applications, with a latency target of under 10 seconds from publish to live on the site. I also had to ensure zero downtime during the migration from the legacy system.
+As the Senior engineer on the Content Platform team, I was responsible for the architecture of the entire content delivery system: how published content flows from Sanity to the Nordstrom and NordstromRack applications, with a latency target of under 10 seconds from publish to live on the site. I also had to ensure zero downtime during the migration from the legacy system.
 
 ### Action
 
@@ -383,3 +383,87 @@ The interviewer will push on guardrails and trust. Be ready for:
 
 **"What happens when the LLM generates factually incorrect copy — like a wrong discount percentage?"**
 > The campaign brief is structured data and the discount percentage is an explicit field. The prompt includes "the discount is exactly 40% — do not state a different number." Additionally, the legal rules engine checks any percentage claim against the brief data. If the LLM generates "50% off" when the brief says 40%, the legal check catches it. For amounts that require verification (specific savings dollars), those claims are flagged for legal review rather than auto-approved.
+
+---
+
+## Story 2 — Additional Section: The Feedback Loop and Model Quality Over Time
+
+*This section addresses the question: "How do you know the system is improving?"
+Add this to the Action section when the interviewer asks about quality over time.*
+
+### The Feedback Loop Architecture
+
+The system has three feedback mechanisms operating on different timescales:
+
+**Immediate feedback (per-campaign):**
+Every approval and rejection is logged with the reason:
+```
+{
+  variation_id: "v_abc123",
+  campaign_id: "anniversary_2024",
+  segment_id: "nordy_club_f_35_45",
+  action: "rejected",
+  reason: "Too casual for Nordy Club segment — 'Snag your deals' is off-brand",
+  guardrail_score: 8.2,   ← guardrail said it was fine, human disagreed
+  reviewer_id: "reviewer_001",
+  timestamp: "2024-07-15T14:23:00Z"
+}
+```
+
+This creates a labeled dataset. Rejections where the guardrail score was high (8+) are the most valuable signal — they represent cases where the automated check missed something the human caught. These are injected as negative few-shot examples in future prompts for the same segment type.
+
+**Campaign-level feedback (per-campaign debrief):**
+After each campaign, the review dashboard generates a quality report:
+```
+Campaign: Anniversary Sale 2024
+Variations generated:     180 (18 segments × 10 per segment)
+First-pass approval rate: 67% (120/180 approved without edit)
+Edit rate:                18% (32/180 approved after human edit)
+Rejection rate:           15% (28/180 rejected, regenerated)
+Guardrail false negative rate: 12% (guardrail passed, human rejected)
+  → Top reason: "tone mismatch for premium segment" (9/28 rejections)
+Average review time:      11 minutes for 180 variations
+```
+
+The "guardrail false negative rate" is the key metric — it measures how often the automated guardrails said "good" but the human said "no." A rising false negative rate means the guardrails need tuning. This triggered us to strengthen the tone check for premium loyalty segments after the first campaign.
+
+**Model drift detection (continuous):**
+The LLM provider updates models periodically. A model update can shift tone, verbosity, or creativity in ways that break brand voice alignment without any change on our end.
+
+Detection mechanism: a weekly automated test runs a fixed set of 50 canonical prompts against the production model and scores the outputs. The scores are compared against the baseline from the previous week. If the average brand voice score drops more than 0.5 points, an alert fires to the platform team for manual review before the next campaign.
+
+```mermaid
+flowchart LR
+    Weekly["Weekly test run\n50 canonical prompts\n(same prompts every week)"]
+    Score["LLM-as-judge scores\neach output\nbrand voice 1-10"]
+    Compare["Compare to baseline\n(last week's scores)"]
+    Alert{"Avg drop\n> 0.5 points?"}
+    OK["No action needed"]
+    Review["Alert platform team\nManual review before\nnext campaign\nConsider prompt adjustment\nor model version pin"]
+
+    Weekly --> Score --> Compare --> Alert
+    Alert -->|"No"| OK
+    Alert -->|"Yes"| Review
+```
+
+**Why this matters in an interview:**
+
+An interviewer will ask: *"How do you know the AI system is actually getting better over time, and how do you catch it when it gets worse?"*
+
+The answer is these three mechanisms:
+1. Per-variation logging creates a training signal for prompt improvement (getting better)
+2. Campaign-level guardrail false negative rate tracks systematic gaps (catching what needs fixing)
+3. Weekly canonical test run detects model drift before it affects a live campaign (catching external degradation)
+
+Without these, the system is a black box that generates copy of unknown and potentially declining quality. With them, quality is a measurable, trending metric — not just an opinion.
+
+### The Numbers After 6 Months of Operation
+
+- First-pass approval rate: improved from 58% (campaign 1) to 79% (campaign 6)
+  → Result of injecting rejection reasons as negative examples
+- Average review time: reduced from 18 minutes to 9 minutes per campaign batch
+  → Result of guardrail improvements reducing false negatives (less manual investigation)
+- Guardrail false negative rate: reduced from 19% to 7%
+  → Result of tone-matching improvements for premium segments
+- Model drift incidents: 1 caught and addressed (provider model update in month 4)
+  → Detected by weekly test run 3 days before a campaign; prompt adjusted to compensate
