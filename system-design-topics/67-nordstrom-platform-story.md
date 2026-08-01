@@ -38,9 +38,13 @@ low-level SSR and routing to AI-powered content systems).
 
 Before the platform my team built, Nordstrom.com was architecturally fragile.
 Each product team — Search and Browse, Product Detail Page, Checkout,
-Recommendations, and others — hosted their own separate web application.
-A "front-door" routing layer sat in front of them all, forwarding requests
-to the correct team's application based on the URL pattern.
+Recommendations, and others — hosted their own separate web application on
+individual EC2 instances. The applications were React-based but server-side
+rendered using .NET, which created a problematic split: product teams wrote
+React components but relied on the platform team's .NET infrastructure to
+render them server-side. A "front-door" routing layer sat in front of them
+all, forwarding requests to the correct team's application based on the URL
+pattern.
 
 My team's responsibility was navigation: we rendered the header, footer,
 and global navigation, then injected the appropriate team's rendered content
@@ -52,9 +56,14 @@ anywhere could degrade the entire site.
 The deeper problem: each team maintained their own hosting infrastructure,
 their own deployment pipeline, their own SSR setup. Engineering effort that
 should go into product features was going into infrastructure. A team that
-wanted to change their routing pattern had to coordinate with our team.
+wanted to change their routing pattern had to coordinate with the platform team.
 A team that wanted to improve their page's performance had to understand
-SSR infrastructure that wasn't their core competency.
+both .NET and React SSR—infrastructure that wasn't their core competency.
+
+The infrastructure itself was brittle: individual EC2 instances per team
+meant no horizontal scaling without manual intervention, deployments required
+coordinated server restarts, and the .NET SSR layer meant teams couldn't
+own their full rendering pipeline—they were blocked by platform team capacity.
 
 At peak events like Anniversary Sale, coordinating deployments across 8+
 separately-hosted applications was a logistical nightmare. Any one team
@@ -63,10 +72,14 @@ could block a critical fix from shipping.
 ### Task
 
 As a senior engineer on the Platform team, I was responsible for designing
-and building the new unified platform — a monorepo-based micro-frontend
-architecture where all teams would develop their React applications in a
-shared codebase, and the platform would handle server-side rendering, routing,
-soft navigation, and deployment infrastructure for all of them.
+and building the new unified platform—a Rush.js monorepo-based micro-frontend
+architecture where all teams would develop their React applications in a shared
+codebase. The platform would handle server-side rendering (moving from .NET
+to Node.js), routing, soft navigation, code splitting, and deployment
+infrastructure for all teams. The infrastructure would move from individual
+EC2 instances to Kubernetes with Docker containers, enabling horizontal
+scaling, zero-downtime deployments, and infrastructure-as-code rather than
+manual server management.
 
 The mandate: enable product teams to deploy independently without owning
 infrastructure, while giving the entire site consistent performance,
@@ -75,11 +88,15 @@ observability, and routing behavior.
 ### Action
 
 **The core insight:** The fragility came from the coupling at the boundary
-between the navigation layer (our team) and the content layer (each product
-team). The content was served from separate origins, which meant every page
-required a network round-trip between our navigation server and each team's
-server. The fix: bring everything into one rendering process so the navigation
-and content are assembled server-side before the response is sent.
+between layers and from the split technology stack. Navigation was rendered
+by our team using .NET, content was rendered by each product team's .NET
+server, but both were actually React components—yet teams couldn't own their
+full rendering pipeline. The content was served from separate origins, which
+meant every page required a network round-trip between our navigation server
+and each team's server. The fix: bring everything into one rendering process
+using Node.js SSR so the navigation and content are assembled server-side
+before the response is sent, and teams can own their full JavaScript/React
+stack end-to-end.
 
 **The architecture:**
 
@@ -120,30 +137,41 @@ graph TD
 **What the platform owns (our team):**
 
 ```
-Server-side rendering (SSR):
-  The platform renders the full page server-side before sending to the browser.
-  Navigation, team content, and shared components are all rendered in one
-  process — no cross-server round trips.
+Server-side rendering (SSR) — Node.js replacing .NET:
+  The platform uses React SSR in Node.js (no more .NET layer).
+  All components—navigation, team content, shared components—render in a
+  single Node.js process. No cross-server round trips. Teams now own their
+  full rendering pipeline end-to-end since it's all JavaScript/React.
+
+Code splitting and lazy loading:
+  Using @loadable/component and @loadable/server for dynamic imports.
+  Each team's application code is split into separate bundles.
+  Only the code needed for the current page is loaded initially.
+  When a user navigates from Search to Product page, the Product bundle
+  loads on-demand rather than being in the initial page load.
+  This keeps initial bundle sizes small while supporting the full site.
 
 Routing:
   URL routing is defined in the platform. A team registers their routes
   in configuration; the platform handles the actual routing logic.
   Teams don't manage their own routing infrastructure.
 
-Soft navigation (client-side routing):
+Soft navigation (client-side routing with code splitting):
   After the initial SSR load, navigation between pages happens client-side
   without full page reloads. The platform handles this for all teams —
   a user going from Search results to a Product page transitions instantly
-  without a full SSR round-trip.
+  without a full SSR round-trip, dynamically loading only the needed code.
 
 Shared tooling:
   Build configuration, TypeScript setup, linting, testing infrastructure.
   Each team gets these for free by being in the monorepo.
 
 DevOps / deployment pipeline:
-  Teams own their application code; the platform handles the build and
-  deployment. A team deploys by merging a PR — they don't manage servers,
-  containers, or CDN configuration.
+  Kubernetes-hosted Docker containers replace individual EC2 instances.
+  Platform handles horizontal scaling, health checks, rolling deployments.
+  Teams deploy by merging a PR—the platform builds the Docker image,
+  pushes to the registry, and Kubernetes handles the rollout.
+  Zero-downtime deployments via Kubernetes rolling updates.
 
 Performance infrastructure:
   Code splitting, lazy loading, cache headers, CDN configuration.
@@ -262,8 +290,13 @@ Platform contract:
   per day independently. Peak event deployments (Anniversary Sale hotfixes)
   went from multi-team coordination calls to single-team PRs.
 
-- **Scale:** All of Nordstrom.com and NordstromRack.com — every
-  customer-facing web application — runs in this platform today.
+- **Infrastructure scalability:** Moving to Kubernetes enabled horizontal
+  auto-scaling based on traffic. During Anniversary Sale, the platform
+  automatically scales from ~20 pods to 200+ pods. With EC2 instances,
+  this would have required manual intervention and pre-provisioning.
+
+- **Adoption:** All of Nordstrom.com and NordstromRack.com—every
+  customer-facing web application—runs in this platform today.
 
 ---
 
@@ -457,3 +490,16 @@ Use this when asked "tell me about your background" in a staff interview:
 > boring infrastructure; product teams get to build product). A platform
 > team that makes themselves the bottleneck has failed, regardless of how
 > elegant the platform is.
+
+**"Tell me about the infrastructure changes you made during the migration."**
+
+> The infrastructure migration was as significant as the application
+> architecture change. We moved from individual EC2 instances per team
+> (manually provisioned, no auto-scaling) to Kubernetes with Docker
+> containers. This gave us horizontal auto-scaling—during Anniversary Sale,
+> the platform automatically scales from 20 to 200+ pods based on traffic.
+> We moved from .NET server-side rendering to Node.js, which meant teams
+> now own their full rendering pipeline—it's all JavaScript/React, no
+> dependency on a separate platform team's .NET infrastructure. Deployments
+> became zero-downtime rolling updates managed by Kubernetes rather than
+> coordinated server restarts across EC2 instances.
