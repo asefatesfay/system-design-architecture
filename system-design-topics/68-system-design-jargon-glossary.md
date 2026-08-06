@@ -3924,3 +3924,863 @@ Good: "We'll use Redis as a cache-aside layer with a 5-minute TTL.
 
 Using this glossary vocabulary signals staff-level thinking to interviewers.
 
+
+---
+---
+
+# PART 2: PRODUCTION-READY GO CODE EXAMPLES
+
+> Practical implementations of the key patterns discussed above.
+> Each example is concise but production-quality, showing real-world usage.
+
+---
+
+## 1. Circuit Breaker
+
+**Pattern:** Prevent cascading failures by stopping requests to failing services.
+
+```go
+package resilience
+
+import (
+    "context"
+    "errors"
+    "sync"
+    "time"
+)
+
+type CircuitBreaker struct {
+    maxFailures  int
+    resetTimeout time.Duration
+    mu           sync.RWMutex
+    failures     int
+    lastFailTime time.Time
+    state        string // "closed", "open", "half-open"
+}
+
+func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBreaker {
+    return &CircuitBreaker{
+        maxFailures:  maxFailures,
+        resetTimeout: resetTimeout,
+        state:        "closed",
+    }
+}
+
+func (cb *CircuitBreaker) Call(ctx context.Context, fn func() error) error {
+    cb.mu.RLock()
+    state := cb.state
+    lastFailTime := cb.lastFailTime
+    cb.mu.RUnlock()
+
+    // Circuit is open - reject request
+    if state == "open" {
+        if time.Since(lastFailTime) > cb.resetTimeout {
+            cb.mu.Lock()
+            cb.state = "half-open"
+            cb.mu.Unlock()
+        } else {
+            return errors.New("circuit breaker is open")
+        }
+    }
+
+    // Execute the function
+    err := fn()
+
+    cb.mu.Lock()
+    defer cb.mu.Unlock()
+
+    if err != nil {
+        cb.failures++
+        cb.lastFailTime = time.Now()
+        if cb.failures >= cb.maxFailures {
+            cb.state = "open"
+        }
+        return err
+    }
+
+    // Success - reset
+    cb.failures = 0
+    cb.state = "closed"
+    return nil
+}
+
+// Usage Example
+func main() {
+    cb := NewCircuitBreaker(3, 30*time.Second)
+
+    err := cb.Call(context.Background(), func() error {
+        return paymentAPI.Charge(userID, 100.00)
+    })
+
+    if err != nil {
+        // Circuit is open or request failed
+        return fallbackResponse()
+    }
+}
+```
+
+---
+
+## 2. Rate Limiter (Token Bucket)
+
+**Pattern:** Control request rate using token bucket algorithm.
+
+```go
+package ratelimit
+
+import (
+    "math"
+    "sync"
+    "time"
+)
+
+type RateLimiter struct {
+    tokens     float64
+    capacity   float64
+    refillRate float64    // tokens per second
+    lastRefill time.Time
+    mu         sync.Mutex
+}
+
+func NewRateLimiter(capacity, refillRate float64) *RateLimiter {
+    return &RateLimiter{
+        tokens:     capacity,
+        capacity:   capacity,
+        refillRate: refillRate,
+        lastRefill: time.Now(),
+    }
+}
+
+func (rl *RateLimiter) Allow() bool {
+    rl.mu.Lock()
+    defer rl.mu.Unlock()
+
+    now := time.Now()
+    elapsed := now.Sub(rl.lastRefill).Seconds()
+
+    // Refill tokens based on elapsed time
+    rl.tokens = math.Min(rl.capacity, rl.tokens + elapsed*rl.refillRate)
+    rl.lastRefill = now
+
+    if rl.tokens >= 1.0 {
+        rl.tokens--
+        return true
+    }
+    return false
+}
+
+// HTTP Middleware
+func RateLimitMiddleware(limiter *RateLimiter) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            if !limiter.Allow() {
+                http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+                return
+            }
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+
+// Usage: 100 requests per second
+limiter := NewRateLimiter(100, 100)
+http.ListenAndServe(":8080", RateLimitMiddleware(limiter)(handler))
+```
+
+---
+
+## 3. Cache-Aside Pattern
+
+**Pattern:** Application manages cache explicitly - check cache, fallback to DB, update cache.
+
+```go
+package cache
+
+import (
+    "context"
+    "database/sql"
+    "encoding/json"
+    "time"
+
+    "github.com/go-redis/redis/v8"
+)
+
+type ProductCache struct {
+    redis *redis.Client
+    db    *sql.DB
+}
+
+func (c *ProductCache) GetProduct(ctx context.Context, id string) (*Product, error) {
+    cacheKey := "product:" + id
+
+    // 1. Try cache first
+    cached, err := c.redis.Get(ctx, cacheKey).Result()
+    if err == nil {
+        var product Product
+        if err := json.Unmarshal([]byte(cached), &product); err == nil {
+            return &product, nil
+        }
+    }
+
+    // 2. Cache miss - query database
+    var product Product
+    err = c.db.QueryRowContext(ctx,
+        "SELECT id, name, price, description FROM products WHERE id = $1", id,
+    ).Scan(&product.ID, &product.Name, &product.Price, &product.Description)
+
+    if err != nil {
+        return nil, err
+    }
+
+    // 3. Store in cache for future requests (TTL: 10 minutes)
+    data, _ := json.Marshal(product)
+    c.redis.Set(ctx, cacheKey, data, 10*time.Minute)
+
+    return &product, nil
+}
+
+// Cache invalidation on update
+func (c *ProductCache) UpdateProduct(ctx context.Context, product *Product) error {
+    // Update database first
+    _, err := c.db.ExecContext(ctx,
+        "UPDATE products SET name=$1, price=$2, description=$3 WHERE id=$4",
+        product.Name, product.Price, product.Description, product.ID,
+    )
+    if err != nil {
+        return err
+    }
+
+    // Invalidate cache
+    c.redis.Del(ctx, "product:"+product.ID)
+    return nil
+}
+```
+
+---
+
+## 4. Idempotent Payment Processing
+
+**Pattern:** Use idempotency keys to safely retry payment operations.
+
+```go
+package payments
+
+import (
+    "context"
+    "database/sql"
+    "encoding/json"
+    "errors"
+    "time"
+
+    "github.com/go-redis/redis/v8"
+    "github.com/google/uuid"
+)
+
+type PaymentService struct {
+    db    *sql.DB
+    redis *redis.Client
+}
+
+type PaymentRequest struct {
+    IdempotencyKey string
+    UserID         string
+    Amount         float64
+}
+
+func (s *PaymentService) ProcessPayment(ctx context.Context, req PaymentRequest) (*Payment, error) {
+    resultKey := "payment:result:" + req.IdempotencyKey
+    lockKey := "payment:lock:" + req.IdempotencyKey
+
+    // Check if already processed
+    cached, err := s.redis.Get(ctx, resultKey).Result()
+    if err == nil {
+        var payment Payment
+        json.Unmarshal([]byte(cached), &payment)
+        return &payment, nil // Return cached result
+    }
+
+    // Acquire distributed lock (prevents concurrent processing)
+    locked, err := s.redis.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
+    if !locked {
+        return nil, errors.New("payment already being processed")
+    }
+    defer s.redis.Del(ctx, lockKey)
+
+    // Process payment
+    payment := &Payment{
+        ID:             uuid.New().String(),
+        IdempotencyKey: req.IdempotencyKey,
+        UserID:         req.UserID,
+        Amount:         req.Amount,
+        Status:         "completed",
+        CreatedAt:      time.Now(),
+    }
+
+    // Store in database with idempotency key constraint
+    _, err = s.db.ExecContext(ctx,
+        `INSERT INTO payments (id, idempotency_key, user_id, amount, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (idempotency_key) DO NOTHING`,
+        payment.ID, payment.IdempotencyKey, payment.UserID,
+        payment.Amount, payment.Status, payment.CreatedAt,
+    )
+
+    if err != nil {
+        return nil, err
+    }
+
+    // Cache result for 24 hours
+    data, _ := json.Marshal(payment)
+    s.redis.Set(ctx, resultKey, data, 24*time.Hour)
+
+    return payment, nil
+}
+```
+
+---
+
+## 5. Retry with Exponential Backoff
+
+**Pattern:** Retry failed operations with increasing delays and jitter.
+
+```go
+package retry
+
+import (
+    "context"
+    "fmt"
+    "math/rand"
+    "time"
+)
+
+func RetryWithBackoff(ctx context.Context, maxRetries int, fn func() error) error {
+    var err error
+
+    for attempt := 0; attempt < maxRetries; attempt++ {
+        err = fn()
+        if err == nil {
+            return nil // Success
+        }
+
+        if ctx.Err() != nil {
+            return ctx.Err() // Context cancelled
+        }
+
+        // Calculate exponential backoff: 100ms, 200ms, 400ms, 800ms...
+        backoff := time.Duration(100*(1<<attempt)) * time.Millisecond
+
+        // Add jitter (random ±50%) to prevent thundering herd
+        jitter := time.Duration(rand.Int63n(int64(backoff)))
+        backoff = backoff + jitter - (backoff / 2)
+
+        // Cap maximum backoff at 10 seconds
+        if backoff > 10*time.Second {
+            backoff = 10 * time.Second
+        }
+
+        select {
+        case <-time.After(backoff):
+            // Continue to next retry
+        case <-ctx.Done():
+            return ctx.Err()
+        }
+    }
+
+    return fmt.Errorf("max retries exceeded: %w", err)
+}
+
+// Usage
+err := RetryWithBackoff(ctx, 5, func() error {
+    return externalAPI.CreateOrder(order)
+})
+```
+
+---
+
+## 6. Database Connection Pool
+
+**Pattern:** Reuse database connections for performance.
+
+```go
+package database
+
+import (
+    "context"
+    "database/sql"
+    "time"
+
+    _ "github.com/lib/pq"
+)
+
+func NewDatabasePool(connString string) (*sql.DB, error) {
+    db, err := sql.Open("postgres", connString)
+    if err != nil {
+        return nil, err
+    }
+
+    // Connection pool configuration
+    db.SetMaxOpenConns(50)                 // Max concurrent connections
+    db.SetMaxIdleConns(10)                 // Keep 10 idle connections warm
+    db.SetConnMaxLifetime(1 * time.Hour)   // Recycle connections after 1 hour
+    db.SetConnMaxIdleTime(10 * time.Minute) // Close idle after 10 minutes
+
+    // Verify connection
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    if err := db.PingContext(ctx); err != nil {
+        return nil, err
+    }
+
+    return db, nil
+}
+
+// Usage with context and timeout
+func GetUser(db *sql.DB, userID string) (*User, error) {
+    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+    defer cancel()
+
+    var user User
+    // Connection automatically borrowed from pool and returned
+    err := db.QueryRowContext(ctx,
+        "SELECT id, email, name FROM users WHERE id = $1", userID,
+    ).Scan(&user.ID, &user.Email, &user.Name)
+
+    return &user, err
+}
+```
+
+---
+
+## 7. Optimistic Locking
+
+**Pattern:** Handle concurrent updates with version numbers.
+
+```go
+package inventory
+
+import (
+    "database/sql"
+    "errors"
+    "time"
+)
+
+func DecrementInventory(db *sql.DB, productID string, quantity int) error {
+    maxRetries := 3
+
+    for attempt := 0; attempt < maxRetries; attempt++ {
+        // Read current state with version
+        var currentQty, version int
+        err := db.QueryRow(
+            "SELECT quantity, version FROM inventory WHERE product_id = $1",
+            productID,
+        ).Scan(&currentQty, &version)
+
+        if err != nil {
+            return err
+        }
+
+        if currentQty < quantity {
+            return errors.New("insufficient inventory")
+        }
+
+        // Optimistic update - only succeeds if version unchanged
+        result, err := db.Exec(
+            `UPDATE inventory
+             SET quantity = quantity - $1, version = version + 1
+             WHERE product_id = $2 AND version = $3`,
+            quantity, productID, version,
+        )
+
+        if err != nil {
+            return err
+        }
+
+        rowsAffected, _ := result.RowsAffected()
+        if rowsAffected == 1 {
+            return nil // Success
+        }
+
+        // Version conflict - someone else updated it, retry with backoff
+        time.Sleep(time.Duration(attempt*50) * time.Millisecond)
+    }
+
+    return errors.New("max retries exceeded due to concurrent updates")
+}
+```
+
+---
+
+## 8. Consistent Hashing
+
+**Pattern:** Distribute data/requests evenly with minimal reshuffling when nodes change.
+
+```go
+package consistent
+
+import (
+    "fmt"
+    "hash/crc32"
+    "sort"
+    "sync"
+)
+
+type ConsistentHash struct {
+    circle     map[uint32]string // hash -> server
+    sortedKeys []uint32
+    servers    map[string]bool
+    replicas   int // virtual nodes per server
+    mu         sync.RWMutex
+}
+
+func NewConsistentHash(replicas int) *ConsistentHash {
+    return &ConsistentHash{
+        circle:   make(map[uint32]string),
+        servers:  make(map[string]bool),
+        replicas: replicas,
+    }
+}
+
+func (ch *ConsistentHash) AddServer(server string) {
+    ch.mu.Lock()
+    defer ch.mu.Unlock()
+
+    // Add virtual nodes for even distribution
+    for i := 0; i < ch.replicas; i++ {
+        hash := ch.hash(fmt.Sprintf("%s:%d", server, i))
+        ch.circle[hash] = server
+        ch.sortedKeys = append(ch.sortedKeys, hash)
+    }
+
+    sort.Slice(ch.sortedKeys, func(i, j int) bool {
+        return ch.sortedKeys[i] < ch.sortedKeys[j]
+    })
+
+    ch.servers[server] = true
+}
+
+func (ch *ConsistentHash) GetServer(key string) string {
+    ch.mu.RLock()
+    defer ch.mu.RUnlock()
+
+    if len(ch.sortedKeys) == 0 {
+        return ""
+    }
+
+    hash := ch.hash(key)
+
+    // Binary search for first server >= hash
+    idx := sort.Search(len(ch.sortedKeys), func(i int) bool {
+        return ch.sortedKeys[i] >= hash
+    })
+
+    // Wrap around to start if at end
+    if idx == len(ch.sortedKeys) {
+        idx = 0
+    }
+
+    return ch.circle[ch.sortedKeys[idx]]
+}
+
+func (ch *ConsistentHash) hash(key string) uint32 {
+    return crc32.ChecksumIEEE([]byte(key))
+}
+
+// Usage - WebSocket server affinity
+ch := NewConsistentHash(150) // 150 virtual nodes per server
+ch.AddServer("ws-1")
+ch.AddServer("ws-2")
+ch.AddServer("ws-3")
+
+userID := "user-12345"
+server := ch.GetServer(userID) // Always returns same server for this user
+```
+
+---
+
+## 9. Health Check Handlers (Kubernetes-style)
+
+**Pattern:** Separate liveness (is it running?) from readiness (can it serve traffic?).
+
+```go
+package health
+
+import (
+    "context"
+    "database/sql"
+    "net/http"
+    "time"
+
+    "github.com/go-redis/redis/v8"
+)
+
+type HealthChecker struct {
+    db    *sql.DB
+    redis *redis.Client
+}
+
+// Liveness: Is the app alive? (if not, Kubernetes restarts it)
+func (h *HealthChecker) LivenessHandler(w http.ResponseWriter, r *http.Request) {
+    // Don't check dependencies - we don't want to restart if DB is down
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("alive"))
+}
+
+// Readiness: Can the app serve traffic? (if not, remove from load balancer)
+func (h *HealthChecker) ReadinessHandler(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+    defer cancel()
+
+    // Check database
+    if err := h.db.PingContext(ctx); err != nil {
+        http.Error(w, "database unhealthy", http.StatusServiceUnavailable)
+        return
+    }
+
+    // Check Redis
+    if err := h.redis.Ping(ctx).Err(); err != nil {
+        http.Error(w, "redis unhealthy", http.StatusServiceUnavailable)
+        return
+    }
+
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("ready"))
+}
+
+// Setup
+func main() {
+    checker := &HealthChecker{db: db, redis: redisClient}
+
+    http.HandleFunc("/health/live", checker.LivenessHandler)
+    http.HandleFunc("/health/ready", checker.ReadinessHandler)
+
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+---
+
+## 10. JWT Authentication Middleware
+
+**Pattern:** Validate JWT tokens in HTTP requests.
+
+```go
+package auth
+
+import (
+    "context"
+    "errors"
+    "net/http"
+    "strings"
+
+    "github.com/golang-jwt/jwt/v5"
+)
+
+type Claims struct {
+    UserID string `json:"userId"`
+    Email  string `json:"email"`
+    jwt.RegisteredClaims
+}
+
+func ValidateJWT(tokenString string, secretKey []byte) (*Claims, error) {
+    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+        // Verify signing method
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, errors.New("unexpected signing method")
+        }
+        return secretKey, nil
+    })
+
+    if err != nil || !token.Valid {
+        return nil, errors.New("invalid token")
+    }
+
+    claims, ok := token.Claims.(*Claims)
+    if !ok {
+        return nil, errors.New("invalid claims")
+    }
+
+    return claims, nil
+}
+
+// HTTP Middleware
+func AuthMiddleware(secretKey []byte) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            authHeader := r.Header.Get("Authorization")
+            if !strings.HasPrefix(authHeader, "Bearer ") {
+                http.Error(w, "unauthorized", http.StatusUnauthorized)
+                return
+            }
+
+            tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+            claims, err := ValidateJWT(tokenString, secretKey)
+            if err != nil {
+                http.Error(w, "invalid token", http.StatusUnauthorized)
+                return
+            }
+
+            // Add user info to context
+            ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+            ctx = context.WithValue(ctx, "email", claims.Email)
+
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    }
+}
+```
+
+---
+
+## 11. Distributed Lock (Redis)
+
+**Pattern:** Coordinate work across multiple instances.
+
+```go
+package distributed
+
+import (
+    "context"
+    "errors"
+    "time"
+
+    "github.com/go-redis/redis/v8"
+    "github.com/google/uuid"
+)
+
+type DistributedLock struct {
+    redis *redis.Client
+    key   string
+    value string // Unique token to prevent accidental unlock
+    ttl   time.Duration
+}
+
+func NewDistributedLock(redis *redis.Client, resource string, ttl time.Duration) *DistributedLock {
+    return &DistributedLock{
+        redis: redis,
+        key:   "lock:" + resource,
+        value: uuid.New().String(),
+        ttl:   ttl,
+    }
+}
+
+func (dl *DistributedLock) Acquire(ctx context.Context) (bool, error) {
+    // SET key value NX EX ttl
+    return dl.redis.SetNX(ctx, dl.key, dl.value, dl.ttl).Result()
+}
+
+func (dl *DistributedLock) Release(ctx context.Context) error {
+    // Lua script ensures we only delete our own lock
+    script := `
+        if redis.call("GET", KEYS[1]) == ARGV[1] then
+            return redis.call("DEL", KEYS[1])
+        else
+            return 0
+        end
+    `
+    return dl.redis.Eval(ctx, script, []string{dl.key}, dl.value).Err()
+}
+
+// Usage: Ensure only one worker processes a job
+func ProcessJobExclusively(redis *redis.Client, jobID string) error {
+    lock := NewDistributedLock(redis, "job:"+jobID, 30*time.Second)
+
+    acquired, err := lock.Acquire(context.Background())
+    if err != nil {
+        return err
+    }
+    if !acquired {
+        return errors.New("job already being processed")
+    }
+    defer lock.Release(context.Background())
+
+    // Only one worker executes this
+    return processJob(jobID)
+}
+```
+
+---
+
+## 12. Saga Pattern (Distributed Transaction)
+
+**Pattern:** Coordinate multi-service transactions with compensating actions.
+
+```go
+package saga
+
+import (
+    "context"
+    "fmt"
+)
+
+type BookingSaga struct {
+    flightSvc *FlightService
+    hotelSvc  *HotelService
+    carSvc    *CarService
+}
+
+func (s *BookingSaga) BookTrip(ctx context.Context, req TripRequest) error {
+    var flightID, hotelID string
+
+    // Step 1: Book flight
+    flightID, err := s.flightSvc.Book(ctx, req.FlightDetails)
+    if err != nil {
+        return fmt.Errorf("flight booking failed: %w", err)
+    }
+
+    // Step 2: Book hotel
+    hotelID, err = s.hotelSvc.Book(ctx, req.HotelDetails)
+    if err != nil {
+        // Compensate: Cancel flight
+        s.flightSvc.Cancel(ctx, flightID)
+        return fmt.Errorf("hotel booking failed: %w", err)
+    }
+
+    // Step 3: Book car
+    _, err = s.carSvc.Book(ctx, req.CarDetails)
+    if err != nil {
+        // Compensate: Cancel hotel and flight
+        s.hotelSvc.Cancel(ctx, hotelID)
+        s.flightSvc.Cancel(ctx, flightID)
+        return fmt.Errorf("car booking failed: %w", err)
+    }
+
+    // All steps succeeded
+    return nil
+}
+
+// In production, use orchestration frameworks like:
+// - Temporal (temporal.io)
+// - Cadence
+// - Netflix Conductor
+```
+
+---
+
+## Quick Reference: When to Use Each Pattern
+
+```
+Circuit Breaker:       Calling flaky external APIs (payments, partners)
+Rate Limiter:          Public APIs, preventing abuse
+Cache-Aside:           Read-heavy workloads (product catalogs, user profiles)
+Idempotency Keys:      Financial transactions, order creation
+Retry + Backoff:       Network calls, eventual consistency operations
+Connection Pooling:    Database access (always use this)
+Optimistic Locking:    Low-contention updates (content editing)
+Consistent Hashing:    Distributed caches, WebSocket routing
+Health Checks:         Kubernetes deployments (liveness + readiness)
+JWT Middleware:        Stateless authentication
+Distributed Lock:      Job processing, leader election
+Saga Pattern:          Multi-service transactions (booking, checkout)
+```
+
+---
+
+**Next Steps:**
+1. Copy these examples into your codebase
+2. Adjust configuration (timeouts, retries, TTLs) based on your SLOs
+3. Add metrics/logging to each pattern
+4. Write tests for failure scenarios
+
+All examples are production-ready starting points. Adapt to your specific requirements.
+
