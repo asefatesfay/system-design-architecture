@@ -157,66 +157,104 @@ phone.take_photo()
 
 ## 🏦 Real-World Example 3: ATM Machine
 
+> **📂 Complete runnable implementation**: See [examples/complete-atm-example.py](examples/complete-atm-example.py)
+>
+> This includes all supporting classes: BankSystem, BankAccount, CashDispenser, CardReader, PINValidator, ReceiptPrinter, and demo scenarios.
+
+**The Abstraction Concept**:
+
+```python
+# What the user sees - Simple!
+atm.withdraw_cash(card_number="1234567890123456", pin="1234", amount=200.00)
+
+# What happens behind the scenes (hidden from user):
+# 1. CardReader reads magnetic stripe/chip
+# 2. BankSystem connects to mainframe
+# 3. PINValidator checks PIN (tracks failed attempts)
+# 4. BankAccount checks balance and daily limit
+# 5. CashDispenser counts optimal bills
+# 6. CashDispenser physically dispenses cash
+# 7. BankAccount updates balance
+# 8. BankSystem logs transaction
+# 9. ReceiptPrinter prints receipt
+# 10. Error handling throughout
+```
+
+**Simplified Overview** (see complete implementation for full code):
+
 ```python
 class ATM:
     """Simple interface for users, complex backend"""
 
-    def __init__(self, bank_system):
-        self.__bank_system = bank_system
+    def __init__(self, atm_id: str, location: str):
+        self.atm_id = atm_id
+        self.location = location
+
+        # Complex subsystems (user doesn't see these!)
+        self.__bank_system = BankSystem()
         self.__cash_dispenser = CashDispenser()
         self.__card_reader = CardReader()
         self.__pin_validator = PINValidator()
         self.__receipt_printer = ReceiptPrinter()
 
-    def withdraw_cash(self, card_number: str, pin: str, amount: float):
+    def withdraw_cash(self, card_number: str, pin: str, amount: float) -> bool:
         """
-        User perspective: Insert card, enter PIN, get cash
+        USER PERSPECTIVE: Simple operation
+        Insert card → Enter PIN → Get cash
 
-        Hidden complexity:
-        - Connect to bank's mainframe
-        - Validate card and PIN
-        - Check account balance
-        - Verify daily limit
-        - Count bills
-        - Update transaction log
-        - Print receipt
-        - Handle errors
+        HIDDEN COMPLEXITY: 10-step process
         """
         print(f"💳 Processing withdrawal of ${amount}")
 
-        # All this is hidden from user:
-        if not self.__pin_validator._verify(card_number, pin):
+        # Step 1: Read card
+        card_data = self.__card_reader.read_card(card_number)
+        if not card_data['read_successful']:
+            return False
+
+        # Step 2: Validate PIN
+        if not self.__pin_validator.verify(card_number, pin):
             print("❌ Invalid PIN")
             return False
 
-        account = self.__bank_system._get_account(card_number)
+        # Step 3: Get account from bank
+        account = self.__bank_system.get_account(card_number)
+        if not account:
+            return False
 
-        if account._balance < amount:
+        # Step 4-5: Check balance and limits
+        if account.get_balance() < amount:
             print("❌ Insufficient funds")
             return False
 
-        if amount > account._daily_limit:
-            print("❌ Exceeds daily limit")
+        # Step 6-7: Count and dispense bills
+        bills = self.__cash_dispenser.count_bills(amount)
+        if bills is None:
             return False
+        self.__cash_dispenser.dispense(bills)
 
-        # Complex cash dispensing logic
-        bills = self.__cash_dispenser._count_bills(amount)
-        self.__cash_dispenser._dispense(bills)
+        # Step 8-9: Update account and log
+        account.debit(amount)
+        self.__bank_system.log_transaction(card_number, amount)
 
-        # Update backend
-        account._debit(amount)
-        self.__bank_system._log_transaction(card_number, amount)
-
-        # Print receipt
-        self.__receipt_printer._print(amount, account._balance)
+        # Step 10: Print receipt
+        self.__receipt_printer.print_receipt(
+            amount, account.get_balance(), card_number[-4:]
+        )
 
         print(f"✅ Please take your ${amount}")
         return True
 
 # User sees simple interface
-atm = ATM(bank_system)
-atm.withdraw_cash("1234-5678-9012", "1234", 100.00)
+atm = ATM("ATM-001", "Downtown Branch")
+atm.withdraw_cash("1234567890123456", "1234", 200.00)
 ```
+
+**Key Abstraction Points**:
+- ✅ User sees: 1 simple method call
+- ✅ Hidden: 10+ complex operations
+- ✅ Hidden: 6 different subsystem classes
+- ✅ Hidden: Error handling, logging, security
+- ✅ Result: Easy to use, hard to break
 
 ## 🎮 Real-World Example 4: Video Game Character
 
