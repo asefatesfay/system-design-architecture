@@ -20,6 +20,33 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 | [INTERVIEW-TIPS.md](./INTERVIEW-TIPS.md) | Interview strategies and tips | 30 min |
 | [INDEX.md](./INDEX.md) | This file - complete index | 5 min |
 
+
+### 🏢 Real Company Examples (NEW!)
+
+| Document | Companies | Topics | Importance |
+|----------|-----------|--------|------------|
+| [REAL-COMPANY-EXAMPLES.md](./real-company-examples/REAL-COMPANY-EXAMPLES.md) | All major tech | Production LLD examples | ⭐⭐⭐ MUST READ |
+| [REAL-WORLD-OOP-EXAMPLES.md](./real-company-examples/REAL-WORLD-OOP-EXAMPLES.md) | Daily life → Code | OOP concepts explained | ⭐⭐⭐ Essential |
+| [REAL-COMPANY-EXAMPLES-PART2.md](./real-company-examples/REAL-COMPANY-EXAMPLES-PART2.md) | Search & Discovery | 4 more examples | ⭐⭐ Useful |
+| [REAL-COMPANY-EXAMPLES-PART3.md](./real-company-examples/REAL-COMPANY-EXAMPLES-PART3.md) | Reliability & Scale | 3 more examples | ⭐⭐ Useful |
+
+**10 Production Systems Covered**:
+1. **Rate Limiter** (Twitter, GitHub, Stripe) - Strategy, Decorator patterns
+2. **Notification System** (Slack, Facebook) - Observer, Factory patterns
+3. **Ride Matching** (Uber, Lyft) - Strategy, State patterns
+4. **Content Recommendation** (Netflix, YouTube) - Multiple algorithms
+5. **Circuit Breaker** (Netflix, AWS) - State, Proxy patterns
+6. **URL Shortener** (bit.ly, TinyURL) - Factory, Strategy patterns
+7. **Autocomplete** (Google, Amazon) - Trie data structure
+8. **Retry Logic** (AWS SDK, Stripe) - Exponential backoff
+9. **Distributed Cache** (Redis, Memcached) - Eviction policies
+10. **Event Bus** (Kafka, RabbitMQ) - Pub/Sub pattern
+
+**Each example includes**:
+- ✅ Complete runnable Python code (500-1000+ lines)
+- ✅ Real company use cases
+- ✅ Design patterns explained
+- ✅ Interview discussion points
 ### 01. Introduction
 
 | File | Topics Covered | Importance |
