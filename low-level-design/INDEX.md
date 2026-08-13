@@ -8,6 +8,7 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 **Want deep learning?** → [GETTING-STARTED.md](./GETTING-STARTED.md) - 8-week program
 **Interview tomorrow?** → [INTERVIEW-TIPS.md](./INTERVIEW-TIPS.md) - Last minute prep
 **Want step-by-step examples?** → [COMPLETE-INTERVIEW-WALKTHROUGHS.md](./COMPLETE-INTERVIEW-WALKTHROUGHS.md) - 3 complete interviews
+**Don't understand WHY?** → [REAL-WORLD-INTUITION.md](./REAL-WORLD-INTUITION.md) - Real consequences and mental models
 
 ## 📚 Complete Table of Contents
 
@@ -20,6 +21,7 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 | [GETTING-STARTED.md](./GETTING-STARTED.md) | Comprehensive 8-week program | 8 weeks |
 | [INTERVIEW-TIPS.md](./INTERVIEW-TIPS.md) | Interview strategies and tips | 30 min |
 | [COMPLETE-INTERVIEW-WALKTHROUGHS.md](./COMPLETE-INTERVIEW-WALKTHROUGHS.md) | 3 complete interview examples | 90 min |
+| [REAL-WORLD-INTUITION.md](./REAL-WORLD-INTUITION.md) | Why design matters - real consequences | 60 min |
 | [INDEX.md](./INDEX.md) | This file - complete index | 5 min |
 
 
@@ -288,6 +290,15 @@ Use this to track your learning:
 ## 📖 Quick Reference
 
 ### Most Important Files (Must Read)
+
+**NEW! Understanding WHY, not just WHAT**:
+
+0. **[Real-World Intuition](./REAL-WORLD-INTUITION.md)** ⭐⭐⭐
+   - Why design principles exist
+   - Real pain points and consequences
+   - Mental models for design thinking
+   - Before/after examples
+
 
 1. **[SOLID Principles](./04-design-principles/solid-principles.md)** ⭐⭐⭐
    - Referenced in 90% of interviews
