@@ -7,6 +7,7 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 **New to LLD?** → [QUICK-START.md](./QUICK-START.md) - 5-day fast track
 **Want deep learning?** → [GETTING-STARTED.md](./GETTING-STARTED.md) - 8-week program
 **Interview tomorrow?** → [INTERVIEW-TIPS.md](./INTERVIEW-TIPS.md) - Last minute prep
+**Want step-by-step examples?** → [COMPLETE-INTERVIEW-WALKTHROUGHS.md](./COMPLETE-INTERVIEW-WALKTHROUGHS.md) - 3 complete interviews
 
 ## 📚 Complete Table of Contents
 
@@ -18,6 +19,7 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 | [QUICK-START.md](./QUICK-START.md) | 5-day intensive guide | 5 days |
 | [GETTING-STARTED.md](./GETTING-STARTED.md) | Comprehensive 8-week program | 8 weeks |
 | [INTERVIEW-TIPS.md](./INTERVIEW-TIPS.md) | Interview strategies and tips | 30 min |
+| [COMPLETE-INTERVIEW-WALKTHROUGHS.md](./COMPLETE-INTERVIEW-WALKTHROUGHS.md) | 3 complete interview examples | 90 min |
 | [INDEX.md](./INDEX.md) | This file - complete index | 5 min |
 
 
@@ -306,6 +308,11 @@ Use this to track your learning:
 5. **[Interview Tips](./INTERVIEW-TIPS.md)** ⭐⭐⭐
    - Read before interview
    - Practical strategies
+
+6. **[Complete Interview Walkthroughs](./COMPLETE-INTERVIEW-WALKTHROUGHS.md)** ⭐⭐⭐
+   - Step-by-step examples
+   - Parking Lot, Hotel Booking, Vending Machine
+   - Exact interview dialogue
 
 ### Cheat Sheets
 
