@@ -22,6 +22,7 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 | [INTERVIEW-TIPS.md](./INTERVIEW-TIPS.md) | Interview strategies and tips | 30 min |
 | [COMPLETE-INTERVIEW-WALKTHROUGHS.md](./COMPLETE-INTERVIEW-WALKTHROUGHS.md) | 3 complete interview examples | 90 min |
 | [REAL-WORLD-INTUITION.md](./REAL-WORLD-INTUITION.md) | Why design matters - real consequences | 60 min |
+| [CONCURRENCY-DEEP-DIVE.md](./CONCURRENCY-DEEP-DIVE.md) | Thread safety, race conditions, deadlocks - basic to advanced | 90 min |
 | [INDEX.md](./INDEX.md) | This file - complete index | 5 min |
 
 
@@ -321,6 +322,11 @@ Use this to track your learning:
    - Practical strategies
 
 6. **[Complete Interview Walkthroughs](./COMPLETE-INTERVIEW-WALKTHROUGHS.md)** ⭐⭐⭐
+
+7. **[Concurrency Deep Dive](./CONCURRENCY-DEEP-DIVE.md)** ⭐⭐⭐
+   - Race conditions, deadlocks, real disasters
+   - Basic to advanced examples
+   - Real-world patterns (rate limiter, LRU cache, thread pool)
    - Step-by-step examples
    - Parking Lot, Hotel Booking, Vending Machine
    - Exact interview dialogue
