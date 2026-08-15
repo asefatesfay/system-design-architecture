@@ -21,7 +21,10 @@ The four fundamental principles of Object-Oriented Programming are the foundatio
 - **Maintainability**: Change implementation without affecting users
 - **Modularity**: Clear boundaries between components
 
-### Python Implementation
+### Multi-Language Implementation
+
+<details open>
+<summary><b>🐍 Python - BankAccount with Encapsulation</b></summary>
 
 Python uses naming conventions for access control:
 - `public`: No underscore (accessible everywhere)
@@ -81,6 +84,280 @@ account._balance = 1000000  # NOT RECOMMENDED!
 # Very difficult to access
 # account.__transaction_history  # AttributeError
 ```
+
+</details>
+
+<details>
+<summary><b>🔷 Go - BankAccount with Encapsulation</b></summary>
+
+Go uses capitalization for access control:
+- **Uppercase** = Public (exported from package)
+- **lowercase** = Private (package-level only)
+
+```go
+package main
+
+import "fmt"
+
+// BankAccount struct
+type BankAccount struct {
+	AccountNumber string      // Public (Uppercase)
+	balance       float64     // Private (lowercase)
+	transactionHistory []transaction
+}
+
+type transaction struct {
+	txType string
+	amount float64
+}
+
+// Constructor function (Go convention)
+func NewBankAccount(accountNumber string, initialBalance float64) *BankAccount {
+	return &BankAccount{
+		AccountNumber:      accountNumber,
+		balance:            initialBalance,
+		transactionHistory: make([]transaction, 0),
+	}
+}
+
+// Public method (Uppercase)
+func (ba *BankAccount) Deposit(amount float64) bool {
+	if amount > 0 {
+		ba.balance += amount
+		ba.addTransaction("deposit", amount)
+		return true
+	}
+	return false
+}
+
+func (ba *BankAccount) Withdraw(amount float64) bool {
+	if amount > 0 && amount <= ba.balance {
+		ba.balance -= amount
+		ba.addTransaction("withdraw", amount)
+		return true
+	}
+	return false
+}
+
+// Public getter
+func (ba *BankAccount) GetBalance() float64 {
+	return ba.balance
+}
+
+// Private method (lowercase)
+func (ba *BankAccount) addTransaction(txType string, amount float64) {
+	ba.transactionHistory = append(ba.transactionHistory, transaction{
+		txType: txType,
+		amount: amount,
+	})
+}
+
+func main() {
+	account := NewBankAccount("123456", 1000)
+	account.Deposit(500)
+	fmt.Printf("Balance: $%.2f\n", account.GetBalance()) // 1500.00
+	
+	// account.balance = 10000 // ❌ Cannot access - private!
+}
+```
+
+</details>
+
+<details>
+<summary><b>☕ Java - BankAccount with Encapsulation</b></summary>
+
+Java uses explicit access modifiers:
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class BankAccount {
+    // Private fields - explicit keyword
+    private String accountNumber;
+    private double balance;
+    private List<Transaction> transactionHistory;
+
+    // Inner class
+    private static class Transaction {
+        String type;
+        double amount;
+        
+        Transaction(String type, double amount) {
+            this.type = type;
+            this.amount = amount;
+        }
+    }
+
+    // Constructor
+    public BankAccount(String accountNumber, double initialBalance) {
+        this.accountNumber = accountNumber;
+        this.balance = initialBalance;
+        this.transactionHistory = new ArrayList<>();
+    }
+
+    // Public method
+    public boolean deposit(double amount) {
+        if (amount > 0) {
+            this.balance += amount;
+            addTransaction("deposit", amount);
+            return true;
+        }
+        return false;
+    }
+
+    public boolean withdraw(double amount) {
+        if (amount > 0 && amount <= this.balance) {
+            this.balance -= amount;
+            addTransaction("withdraw", amount);
+            return true;
+        }
+        return false;
+    }
+
+    // Public getter
+    public double getBalance() {
+        return this.balance;
+    }
+
+    public String getAccountNumber() {
+        return this.accountNumber;
+    }
+
+    // Private method
+    private void addTransaction(String type, double amount) {
+        transactionHistory.add(new Transaction(type, amount));
+    }
+
+    public static void main(String[] args) {
+        BankAccount account = new BankAccount("123456", 1000);
+        account.deposit(500);
+        System.out.printf("Balance: $%.2f%n", account.getBalance()); // $1500.00
+        
+        // account.balance = 10000; // ❌ Compilation error - private!
+    }
+}
+```
+
+</details>
+
+<details>
+<summary><b>💛 JavaScript - BankAccount with Encapsulation</b></summary>
+
+JavaScript offers multiple approaches:
+
+**Modern (ES2022+) with `#` private fields:**
+```javascript
+class BankAccount {
+    // Private fields with #
+    #balance;
+    #transactionHistory;
+
+    constructor(accountNumber, initialBalance) {
+        this.accountNumber = accountNumber; // Public
+        this.#balance = initialBalance;      // Private
+        this.#transactionHistory = [];       // Private
+    }
+
+    deposit(amount) {
+        if (amount > 0) {
+            this.#balance += amount;
+            this.#addTransaction('deposit', amount);
+            return true;
+        }
+        return false;
+    }
+
+    withdraw(amount) {
+        if (amount > 0 && amount <= this.#balance) {
+            this.#balance -= amount;
+            this.#addTransaction('withdraw', amount);
+            return true;
+        }
+        return false;
+    }
+
+    getBalance() {
+        return this.#balance;
+    }
+
+    // Getter property
+    get balance() {
+        return this.#balance;
+    }
+
+    // Private method
+    #addTransaction(type, amount) {
+        this.#transactionHistory.push({ type, amount });
+    }
+}
+
+const account = new BankAccount('123456', 1000);
+account.deposit(500);
+console.log(account.getBalance()); // 1500
+console.log(account.balance);      // 1500
+
+// account.#balance = 10000; // ❌ SyntaxError - truly private!
+```
+
+**Alternative (Closure pattern for older JS):**
+```javascript
+function createBankAccount(accountNumber, initialBalance) {
+    // Private variables (closure)
+    let balance = initialBalance;
+    let transactionHistory = [];
+
+    function addTransaction(type, amount) {
+        transactionHistory.push({ type, amount });
+    }
+
+    // Public API
+    return {
+        accountNumber,
+        
+        deposit(amount) {
+            if (amount > 0) {
+                balance += amount;
+                addTransaction('deposit', amount);
+                return true;
+            }
+            return false;
+        },
+
+        withdraw(amount) {
+            if (amount > 0 && amount <= balance) {
+                balance -= amount;
+                addTransaction('withdraw', amount);
+                return true;
+            }
+            return false;
+        },
+
+        getBalance() {
+            return balance;
+        }
+    };
+}
+
+const account = createBankAccount('123456', 1000);
+account.deposit(500);
+console.log(account.getBalance()); // 1500
+```
+
+</details>
+
+---
+
+### Language Comparison
+
+| Feature | Python | Go | Java | JavaScript |
+|---------|--------|-----|------|------------|
+| **Private** | `__field` | `lowercase` | `private field` | `#field` (ES2022+) |
+| **Public** | `field` | `Uppercase` | `public field` | `field` |
+| **Protected** | `_field` | N/A | `protected field` | Convention only |
+| **Enforcement** | Runtime (weak) | Compile-time (package) | Compile-time (strict) | Runtime (`#`) |
+| **Best Practice** | Use `@property` | Constructor functions | Getters/setters | Use `#` for truly private |
+
 
 ### Benefits of Encapsulation
 
@@ -143,6 +420,11 @@ user.email = "new@example.com"  # Validates first
 - **Encapsulation**: About data hiding and access control
 - **Abstraction**: About hiding complexity and showing only relevant details
 
+### Multi-Language Implementation
+
+<details open>
+<summary><b>🐍 Python - PaymentProcessor with Abstraction</b></summary>
+
 ```python
 from abc import ABC, abstractmethod
 
@@ -200,65 +482,260 @@ order2 = OrderService(PayPalProcessor())
 order2.checkout(200)
 ```
 
-### Real-World Example: Database Abstraction
+</details>
 
-```python
-from abc import ABC, abstractmethod
+<details>
+<summary><b>🔷 Go - PaymentProcessor with Abstraction</b></summary>
 
-class Database(ABC):
-    """Abstract database interface"""
+Go uses interfaces for abstraction (implicit implementation):
 
-    @abstractmethod
-    def connect(self):
-        pass
+```go
+package main
 
-    @abstractmethod
-    def execute_query(self, query):
-        pass
+import "fmt"
 
-    @abstractmethod
-    def close(self):
-        pass
+// Interface defines WHAT (abstraction)
+type PaymentProcessor interface {
+	ProcessPayment(amount float64) bool
+	Refund(transactionID string, amount float64) bool
+}
 
-class PostgreSQLDatabase(Database):
-    def connect(self):
-        print("Connecting to PostgreSQL...")
-        # Complex connection logic
+// Concrete implementation - CreditCard
+type CreditCardProcessor struct{}
 
-    def execute_query(self, query):
-        print(f"Executing in PostgreSQL: {query}")
-        # PostgreSQL-specific query execution
+func (cc CreditCardProcessor) ProcessPayment(amount float64) bool {
+	fmt.Printf("Processing $%.2f via Credit Card\n", amount)
+	// Complex credit card logic hidden
+	return true
+}
 
-    def close(self):
-        print("Closing PostgreSQL connection")
+func (cc CreditCardProcessor) Refund(transactionID string, amount float64) bool {
+	fmt.Printf("Refunding $%.2f to credit card\n", amount)
+	return true
+}
 
-class MongoDatabase(Database):
-    def connect(self):
-        print("Connecting to MongoDB...")
-        # Different connection logic
+// Concrete implementation - PayPal
+type PayPalProcessor struct{}
 
-    def execute_query(self, query):
-        print(f"Executing in MongoDB: {query}")
-        # MongoDB-specific query execution
+func (pp PayPalProcessor) ProcessPayment(amount float64) bool {
+	fmt.Printf("Processing $%.2f via PayPal\n", amount)
+	// Complex PayPal API logic hidden
+	return true
+}
 
-    def close(self):
-        print("Closing MongoDB connection")
+func (pp PayPalProcessor) Refund(transactionID string, amount float64) bool {
+	fmt.Printf("Refunding $%.2f via PayPal\n", amount)
+	return true
+}
 
-# Application code works with abstraction
-class UserRepository:
-    def __init__(self, database: Database):
-        self.db = database
+// OrderService depends on abstraction
+type OrderService struct {
+	paymentProcessor PaymentProcessor
+}
 
-    def get_user(self, user_id):
-        self.db.connect()
-        result = self.db.execute_query(f"SELECT * FROM users WHERE id={user_id}")
-        self.db.close()
-        return result
+func NewOrderService(processor PaymentProcessor) *OrderService {
+	return &OrderService{paymentProcessor: processor}
+}
 
-# Can switch database without changing UserRepository code!
-repo1 = UserRepository(PostgreSQLDatabase())
-repo2 = UserRepository(MongoDatabase())
+func (os *OrderService) Checkout(amount float64) bool {
+	// Abstraction: We know WHAT, not HOW
+	return os.paymentProcessor.ProcessPayment(amount)
+}
+
+func main() {
+	// Interchangeable implementations
+	order1 := NewOrderService(CreditCardProcessor{})
+	order1.Checkout(100)
+
+	order2 := NewOrderService(PayPalProcessor{})
+	order2.Checkout(200)
+}
 ```
+
+**Key Go concept**: Interfaces are satisfied implicitly - no `implements` keyword needed!
+
+</details>
+
+<details>
+<summary><b>☕ Java - PaymentProcessor with Abstraction</b></summary>
+
+```java
+// Interface defines WHAT (abstraction)
+interface PaymentProcessor {
+    boolean processPayment(double amount);
+    boolean refund(String transactionId, double amount);
+}
+
+// Concrete implementation - CreditCard
+class CreditCardProcessor implements PaymentProcessor {
+    @Override
+    public boolean processPayment(double amount) {
+        System.out.printf("Processing $%.2f via Credit Card%n", amount);
+        // Complex credit card logic hidden
+        return true;
+    }
+
+    @Override
+    public boolean refund(String transactionId, double amount) {
+        System.out.printf("Refunding $%.2f to credit card%n", amount);
+        return true;
+    }
+}
+
+// Concrete implementation - PayPal
+class PayPalProcessor implements PaymentProcessor {
+    @Override
+    public boolean processPayment(double amount) {
+        System.out.printf("Processing $%.2f via PayPal%n", amount);
+        // Complex PayPal API logic hidden
+        return true;
+    }
+
+    @Override
+    public boolean refund(String transactionId, double amount) {
+        System.out.printf("Refunding $%.2f via PayPal%n", amount);
+        return true;
+    }
+}
+
+// OrderService depends on abstraction
+class OrderService {
+    private PaymentProcessor paymentProcessor;
+
+    public OrderService(PaymentProcessor paymentProcessor) {
+        this.paymentProcessor = paymentProcessor;
+    }
+
+    public boolean checkout(double amount) {
+        // Abstraction: We know WHAT, not HOW
+        return paymentProcessor.processPayment(amount);
+    }
+}
+
+public class AbstractionDemo {
+    public static void main(String[] args) {
+        // Interchangeable implementations
+        OrderService order1 = new OrderService(new CreditCardProcessor());
+        order1.checkout(100);
+
+        OrderService order2 = new OrderService(new PayPalProcessor());
+        order2.checkout(200);
+    }
+}
+```
+
+**Alternative: Abstract class** (when you need some default implementation):
+```java
+abstract class AbstractPaymentProcessor {
+    // Concrete method with default behavior
+    public void logTransaction(double amount) {
+        System.out.println("Transaction logged: $" + amount);
+    }
+
+    // Abstract method - must be implemented
+    public abstract boolean processPayment(double amount);
+}
+```
+
+</details>
+
+<details>
+<summary><b>💛 JavaScript - PaymentProcessor with Abstraction</b></summary>
+
+**Modern approach (ES6 classes):**
+```javascript
+// Abstract class (by convention)
+class PaymentProcessor {
+    processPayment(amount) {
+        throw new Error('processPayment must be implemented');
+    }
+
+    refund(transactionId, amount) {
+        throw new Error('refund must be implemented');
+    }
+}
+
+// Concrete implementation - CreditCard
+class CreditCardProcessor extends PaymentProcessor {
+    processPayment(amount) {
+        console.log(`Processing $${amount} via Credit Card`);
+        // Complex credit card logic hidden
+        return true;
+    }
+
+    refund(transactionId, amount) {
+        console.log(`Refunding $${amount} to credit card`);
+        return true;
+    }
+}
+
+// Concrete implementation - PayPal
+class PayPalProcessor extends PaymentProcessor {
+    processPayment(amount) {
+        console.log(`Processing $${amount} via PayPal`);
+        // Complex PayPal API logic hidden
+        return true;
+    }
+
+    refund(transactionId, amount) {
+        console.log(`Refunding $${amount} via PayPal`);
+        return true;
+    }
+}
+
+// OrderService depends on abstraction
+class OrderService {
+    constructor(paymentProcessor) {
+        this.paymentProcessor = paymentProcessor;
+    }
+
+    checkout(amount) {
+        // Abstraction: We know WHAT, not HOW
+        return this.paymentProcessor.processPayment(amount);
+    }
+}
+
+// Usage - interchangeable implementations
+const order1 = new OrderService(new CreditCardProcessor());
+order1.checkout(100);
+
+const order2 = new OrderService(new PayPalProcessor());
+order2.checkout(200);
+```
+
+**TypeScript alternative** (true interfaces):
+```typescript
+// Interface (TypeScript)
+interface PaymentProcessor {
+    processPayment(amount: number): boolean;
+    refund(transactionId: string, amount: number): boolean;
+}
+
+class CreditCardProcessor implements PaymentProcessor {
+    processPayment(amount: number): boolean {
+        console.log(`Processing $${amount} via Credit Card`);
+        return true;
+    }
+
+    refund(transactionId: string, amount: number): boolean {
+        console.log(`Refunding $${amount} to credit card`);
+        return true;
+    }
+}
+```
+
+</details>
+
+---
+
+### Language Comparison - Abstraction
+
+| Feature | Python | Go | Java | JavaScript |
+|---------|--------|-----|------|------------|
+| **Abstraction** | `ABC` + `@abstractmethod` | Interfaces (implicit) | `interface` or `abstract class` | Convention or TypeScript |
+| **Enforcement** | Runtime error if not implemented | Compile-time (implicit) | Compile-time (explicit) | Runtime or TS compile-time |
+| **Multiple** | Multiple inheritance from ABC | Multiple interfaces (implicit) | Multiple interfaces | Multiple base classes |
+| **When to use** | Define contract for subclasses | Define behavior contracts | Formal contracts | TypeScript for type safety |
 
 ---
 
@@ -271,6 +748,11 @@ repo2 = UserRepository(MongoDatabase())
 - **Code Reuse**: Don't repeat yourself
 - **Extensibility**: Add new features without modifying existing code
 - **Hierarchy**: Model real-world relationships
+
+### Multi-Language Implementation
+
+<details open>
+<summary><b>🐍 Python - Animal Hierarchy with Inheritance</b></summary>
 
 ```python
 # Base class (Parent/Superclass)
@@ -332,99 +814,334 @@ dog.fetch()      # Buddy is fetching the ball
 cat.scratch()    # Whiskers is scratching the furniture
 ```
 
-### Inheritance in LLD: Vehicle Hierarchy
+</details>
 
-```python
-class Vehicle:
-    """Base class for all vehicles"""
+<details>
+<summary><b>🔷 Go - Animal Hierarchy with Embedding</b></summary>
 
-    def __init__(self, vehicle_id, brand, model, year):
-        self.vehicle_id = vehicle_id
-        self.brand = brand
-        self.model = model
-        self.year = year
-        self._is_running = False
+Go doesn't have traditional inheritance, but uses **composition via embedding**:
 
-    def start(self):
-        if not self._is_running:
-            self._is_running = True
-            print(f"{self.brand} {self.model} started")
+```go
+package main
 
-    def stop(self):
-        if self._is_running:
-            self._is_running = False
-            print(f"{self.brand} {self.model} stopped")
+import "fmt"
 
-class Car(Vehicle):
-    def __init__(self, vehicle_id, brand, model, year, num_doors):
-        super().__init__(vehicle_id, brand, model, year)
-        self.num_doors = num_doors
-        self.trunk_open = False
+// Base "class" - Animal
+type Animal struct {
+	Name string
+	Age  int
+}
 
-    def open_trunk(self):
-        self.trunk_open = True
-        print("Trunk opened")
+// Methods on Animal
+func (a Animal) Eat() {
+	fmt.Printf("%s is eating\n", a.Name)
+}
 
-class Motorcycle(Vehicle):
-    def __init__(self, vehicle_id, brand, model, year, has_sidecar):
-        super().__init__(vehicle_id, brand, model, year)
-        self.has_sidecar = has_sidecar
+func (a Animal) Sleep() {
+	fmt.Printf("%s is sleeping\n", a.Name)
+}
 
-    def wheelie(self):
-        if self._is_running:
-            print("Performing wheelie!")
+func (a Animal) MakeSound() {
+	fmt.Println("Some generic sound")
+}
 
-class ElectricCar(Car):
-    def __init__(self, vehicle_id, brand, model, year, num_doors, battery_capacity):
-        super().__init__(vehicle_id, brand, model, year, num_doors)
-        self.battery_capacity = battery_capacity
-        self.charge_level = 100
+// Dog "inherits" from Animal via embedding
+type Dog struct {
+	Animal // Embedded struct (composition)
+	Breed  string
+}
 
-    def charge(self, amount):
-        self.charge_level = min(100, self.charge_level + amount)
-        print(f"Charged to {self.charge_level}%")
+// Override MakeSound for Dog
+func (d Dog) MakeSound() {
+	fmt.Printf("%s says: Woof!\n", d.Name)
+}
 
-    # Override start to check battery
-    def start(self):
-        if self.charge_level > 0:
-            super().start()
-        else:
-            print("Battery depleted! Cannot start.")
+// New method specific to Dog
+func (d Dog) Fetch() {
+	fmt.Printf("%s is fetching the ball\n", d.Name)
+}
 
-# Usage
-tesla = ElectricCar("EV001", "Tesla", "Model 3", 2024, 4, 75)
-tesla.start()        # Inherited from Vehicle
-tesla.open_trunk()   # Inherited from Car
-tesla.charge(50)     # Specific to ElectricCar
+// Cat "inherits" from Animal via embedding
+type Cat struct {
+	Animal // Embedded struct
+	Color  string
+}
+
+// Override MakeSound for Cat
+func (c Cat) MakeSound() {
+	fmt.Printf("%s says: Meow!\n", c.Name)
+}
+
+// New method specific to Cat
+func (c Cat) Scratch() {
+	fmt.Printf("%s is scratching the furniture\n", c.Name)
+}
+
+func main() {
+	// Create instances
+	dog := Dog{
+		Animal: Animal{Name: "Buddy", Age: 3},
+		Breed:  "Golden Retriever",
+	}
+
+	cat := Cat{
+		Animal: Animal{Name: "Whiskers", Age: 2},
+		Color:  "Black",
+	}
+
+	// Inherited methods (promoted from embedded Animal)
+	dog.Eat()   // Buddy is eating
+	cat.Sleep() // Whiskers is sleeping
+
+	// Overridden methods
+	dog.MakeSound() // Buddy says: Woof!
+	cat.MakeSound() // Whiskers says: Meow!
+
+	// New methods
+	dog.Fetch()   // Buddy is fetching the ball
+	cat.Scratch() // Whiskers is scratching the furniture
+}
 ```
 
-### Multiple Inheritance
+**Key Go Concept:**
+- Go uses **composition over inheritance**
+- Embedded structs promote their fields/methods automatically
+- No `super()` - access embedded struct directly: `d.Animal.MakeSound()`
 
-Python supports multiple inheritance (inheriting from multiple classes):
+</details>
 
-```python
-class Flyable:
-    def fly(self):
-        print("Flying...")
+<details>
+<summary><b>☕ Java - Animal Hierarchy with Inheritance</b></summary>
 
-class Swimmable:
-    def swim(self):
-        print("Swimming...")
+```java
+// Base class (Parent/Superclass)
+class Animal {
+    protected String name;
+    protected int age;
 
-class Duck(Animal, Flyable, Swimmable):
-    def __init__(self, name):
-        Animal.__init__(self, name, 1)
+    public Animal(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
 
-    def make_sound(self):
-        print(f"{self.name} says: Quack!")
+    public void eat() {
+        System.out.println(name + " is eating");
+    }
 
-# Duck can do everything
-duck = Duck("Donald")
-duck.eat()    # From Animal
-duck.fly()    # From Flyable
-duck.swim()   # From Swimmable
-duck.make_sound()  # Overridden
+    public void sleep() {
+        System.out.println(name + " is sleeping");
+    }
+
+    public void makeSound() {
+        System.out.println("Some generic sound");
+    }
+}
+
+// Derived class (Child/Subclass)
+class Dog extends Animal {
+    private String breed;
+
+    public Dog(String name, int age, String breed) {
+        super(name, age);  // Call parent constructor
+        this.breed = breed;
+    }
+
+    // Override parent method
+    @Override
+    public void makeSound() {
+        System.out.println(name + " says: Woof!");
+    }
+
+    // Add new method
+    public void fetch() {
+        System.out.println(name + " is fetching the ball");
+    }
+
+    public String getBreed() {
+        return breed;
+    }
+}
+
+class Cat extends Animal {
+    private String color;
+
+    public Cat(String name, int age, String color) {
+        super(name, age);
+        this.color = color;
+    }
+
+    // Override parent method
+    @Override
+    public void makeSound() {
+        System.out.println(name + " says: Meow!");
+    }
+
+    // Add new method
+    public void scratch() {
+        System.out.println(name + " is scratching the furniture");
+    }
+
+    public String getColor() {
+        return color;
+    }
+}
+
+public class InheritanceDemo {
+    public static void main(String[] args) {
+        Dog dog = new Dog("Buddy", 3, "Golden Retriever");
+        Cat cat = new Cat("Whiskers", 2, "Black");
+
+        // Inherited methods
+        dog.eat();    // Buddy is eating
+        cat.sleep();  // Whiskers is sleeping
+
+        // Overridden methods
+        dog.makeSound();  // Buddy says: Woof!
+        cat.makeSound();  // Whiskers says: Meow!
+
+        // New methods
+        dog.fetch();      // Buddy is fetching the ball
+        cat.scratch();    // Whiskers is scratching the furniture
+    }
+}
 ```
+
+**Key Java Concepts:**
+- `extends` keyword for inheritance
+- `super()` to call parent constructor (must be first line)
+- `@Override` annotation (optional but recommended)
+- `protected` allows access in subclasses
+- Java only supports **single inheritance** (one parent class)
+
+</details>
+
+<details>
+<summary><b>💛 JavaScript - Animal Hierarchy with Inheritance</b></summary>
+
+**Modern ES6 Classes:**
+```javascript
+// Base class (Parent/Superclass)
+class Animal {
+    constructor(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    eat() {
+        console.log(`${this.name} is eating`);
+    }
+
+    sleep() {
+        console.log(`${this.name} is sleeping`);
+    }
+
+    makeSound() {
+        console.log("Some generic sound");
+    }
+}
+
+// Derived class (Child/Subclass)
+class Dog extends Animal {
+    constructor(name, age, breed) {
+        super(name, age);  // Call parent constructor
+        this.breed = breed;
+    }
+
+    // Override parent method
+    makeSound() {
+        console.log(`${this.name} says: Woof!`);
+    }
+
+    // Add new method
+    fetch() {
+        console.log(`${this.name} is fetching the ball`);
+    }
+}
+
+class Cat extends Animal {
+    constructor(name, age, color) {
+        super(name, age);
+        this.color = color;
+    }
+
+    // Override parent method
+    makeSound() {
+        console.log(`${this.name} says: Meow!`);
+    }
+
+    // Add new method
+    scratch() {
+        console.log(`${this.name} is scratching the furniture`);
+    }
+}
+
+// Usage
+const dog = new Dog("Buddy", 3, "Golden Retriever");
+const cat = new Cat("Whiskers", 2, "Black");
+
+// Inherited methods
+dog.eat();    // Buddy is eating
+cat.sleep();  // Whiskers is sleeping
+
+// Overridden methods
+dog.makeSound();  // Buddy says: Woof!
+cat.makeSound();  // Whiskers says: Meow!
+
+// New methods
+dog.fetch();      // Buddy is fetching the ball
+cat.scratch();    // Whiskers is scratching the furniture
+```
+
+**Prototype-based Inheritance (Pre-ES6):**
+```javascript
+// Constructor function
+function Animal(name, age) {
+    this.name = name;
+    this.age = age;
+}
+
+Animal.prototype.eat = function() {
+    console.log(this.name + " is eating");
+};
+
+Animal.prototype.makeSound = function() {
+    console.log("Some generic sound");
+};
+
+// Inheritance via prototype chain
+function Dog(name, age, breed) {
+    Animal.call(this, name, age);  // Call parent constructor
+    this.breed = breed;
+}
+
+Dog.prototype = Object.create(Animal.prototype);
+Dog.prototype.constructor = Dog;
+
+Dog.prototype.makeSound = function() {
+    console.log(this.name + " says: Woof!");
+};
+
+Dog.prototype.fetch = function() {
+    console.log(this.name + " is fetching the ball");
+};
+```
+
+</details>
+
+---
+
+### Language Comparison - Inheritance
+
+| Feature | Python | Go | Java | JavaScript |
+|---------|--------|-----|------|------------|
+| **Syntax** | `class Dog(Animal)` | Embedding: `Animal` inside struct | `class Dog extends Animal` | `class Dog extends Animal` |
+| **Constructor** | `super().__init__()` | Initialize embedded struct | `super(name, age)` | `super(name, age)` |
+| **Multiple Inheritance** | ✅ Yes (can inherit from multiple classes) | ❌ No (use multiple interfaces) | ❌ No (single parent, multiple interfaces) | ❌ No (single parent) |
+| **Method Override** | Just redefine method | Redefine method (shadows embedded) | `@Override` annotation | Just redefine method |
+| **Access Parent** | `super().method()` | `d.Animal.Method()` | `super.method()` | `super.method()` |
+| **Philosophy** | Inheritance is common | Composition over inheritance | Inheritance is fundamental | Prototypal (classes are sugar) |
+
+---
 
 ---
 
@@ -440,7 +1157,13 @@ duck.make_sound()  # Overridden
 
 ### Types of Polymorphism
 
-#### 1. Method Overriding (Runtime Polymorphism)
+
+### Multi-Language Implementation
+
+#### Method Overriding (Runtime Polymorphism)
+
+<details open>
+<summary><b>🐍 Python - Shape Polymorphism</b></summary>
 
 ```python
 class Shape:
@@ -502,10 +1225,7 @@ for shape in shapes:
     print_shape_info(shape)  # Same code, different behavior!
 ```
 
-#### 2. Duck Typing (Python-specific)
-
-"If it walks like a duck and quacks like a duck, it must be a duck."
-
+**Duck Typing (Python-specific):**
 ```python
 # No inheritance needed in Python!
 class Dog:
@@ -530,89 +1250,394 @@ make_it_speak(Cat())    # Meow!
 make_it_speak(Robot())  # Beep boop!
 ```
 
-#### 3. Operator Overloading
+</details>
 
-```python
-class Vector:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+<details>
+<summary><b>🔷 Go - Shape Polymorphism with Interfaces</b></summary>
 
-    def __add__(self, other):
-        """Overload + operator"""
-        return Vector(self.x + other.x, self.y + other.y)
+```go
+package main
 
-    def __mul__(self, scalar):
-        """Overload * operator"""
-        return Vector(self.x * scalar, self.y * scalar)
+import (
+	"fmt"
+	"math"
+)
 
-    def __str__(self):
-        return f"Vector({self.x}, {self.y})"
+// Interface defines the contract (polymorphism)
+type Shape interface {
+	Area() float64
+	Perimeter() float64
+}
 
-v1 = Vector(1, 2)
-v2 = Vector(3, 4)
+// Rectangle implementation
+type Rectangle struct {
+	Width  float64
+	Height float64
+}
 
-v3 = v1 + v2      # Uses __add__
-v4 = v1 * 3       # Uses __mul__
+func (r Rectangle) Area() float64 {
+	return r.Width * r.Height
+}
 
-print(v3)  # Vector(4, 6)
-print(v4)  # Vector(3, 6)
+func (r Rectangle) Perimeter() float64 {
+	return 2 * (r.Width + r.Height)
+}
+
+// Circle implementation
+type Circle struct {
+	Radius float64
+}
+
+func (c Circle) Area() float64 {
+	return math.Pi * c.Radius * c.Radius
+}
+
+func (c Circle) Perimeter() float64 {
+	return 2 * math.Pi * c.Radius
+}
+
+// Triangle implementation
+type Triangle struct {
+	A, B, C float64
+}
+
+func (t Triangle) Area() float64 {
+	// Heron's formula
+	s := (t.A + t.B + t.C) / 2
+	return math.Sqrt(s * (s - t.A) * (s - t.B) * (s - t.C))
+}
+
+func (t Triangle) Perimeter() float64 {
+	return t.A + t.B + t.C
+}
+
+// Polymorphic function - works with ANY shape
+func PrintShapeInfo(shape Shape) {
+	fmt.Printf("Area: %.2f\n", shape.Area())
+	fmt.Printf("Perimeter: %.2f\n", shape.Perimeter())
+}
+
+func main() {
+	// All shapes can be used interchangeably
+	shapes := []Shape{
+		Rectangle{Width: 5, Height: 10},
+		Circle{Radius: 7},
+		Triangle{A: 3, B: 4, C: 5},
+	}
+
+	for _, shape := range shapes {
+		PrintShapeInfo(shape) // Same code, different behavior!
+	}
+}
 ```
 
-### Real-World Example: Notification System
+**Key Go Concept:**
+- Interfaces are satisfied **implicitly** - no `implements` keyword
+- Any type with matching methods automatically satisfies the interface
+- This is Go's primary mechanism for polymorphism
 
-```python
-from abc import ABC, abstractmethod
+</details>
 
-class NotificationSender(ABC):
-    @abstractmethod
-    def send(self, recipient, message):
-        pass
+<details>
+<summary><b>☕ Java - Shape Polymorphism with Interfaces</b></summary>
 
-class EmailNotification(NotificationSender):
-    def send(self, recipient, message):
-        print(f"Sending email to {recipient}: {message}")
-        # SMTP logic here
+```java
+// Interface defines the contract
+interface Shape {
+    double area();
+    double perimeter();
+}
 
-class SMSNotification(NotificationSender):
-    def send(self, recipient, message):
-        print(f"Sending SMS to {recipient}: {message}")
-        # Twilio API logic here
+// Rectangle implementation
+class Rectangle implements Shape {
+    private double width;
+    private double height;
 
-class PushNotification(NotificationSender):
-    def send(self, recipient, message):
-        print(f"Sending push notification to {recipient}: {message}")
-        # FCM/APNS logic here
+    public Rectangle(double width, double height) {
+        this.width = width;
+        this.height = height;
+    }
 
-class SlackNotification(NotificationSender):
-    def send(self, recipient, message):
-        print(f"Sending Slack message to {recipient}: {message}")
-        # Slack API logic here
+    @Override
+    public double area() {
+        return width * height;
+    }
 
-# Service that uses polymorphism
-class NotificationService:
-    def __init__(self):
-        self.senders = []
+    @Override
+    public double perimeter() {
+        return 2 * (width + height);
+    }
+}
 
-    def add_sender(self, sender: NotificationSender):
-        self.senders.append(sender)
+// Circle implementation
+class Circle implements Shape {
+    private double radius;
 
-    def notify_all(self, recipient, message):
-        """Send via all registered channels - polymorphism!"""
-        for sender in self.senders:
-            sender.send(recipient, message)
+    public Circle(double radius) {
+        this.radius = radius;
+    }
 
-# Usage - easy to extend with new notification types
-service = NotificationService()
-service.add_sender(EmailNotification())
-service.add_sender(SMSNotification())
-service.add_sender(PushNotification())
+    @Override
+    public double area() {
+        return Math.PI * radius * radius;
+    }
 
-service.notify_all("user@example.com", "Your order has shipped!")
+    @Override
+    public double perimeter() {
+        return 2 * Math.PI * radius;
+    }
+}
 
-# Adding new notification type? Just implement the interface!
-service.add_sender(SlackNotification())
+// Triangle implementation
+class Triangle implements Shape {
+    private double a, b, c;
+
+    public Triangle(double a, double b, double c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+
+    @Override
+    public double area() {
+        // Heron's formula
+        double s = (a + b + c) / 2;
+        return Math.sqrt(s * (s - a) * (s - b) * (s - c));
+    }
+
+    @Override
+    public double perimeter() {
+        return a + b + c;
+    }
+}
+
+// Polymorphic function - works with ANY shape
+class ShapeDemo {
+    public static void printShapeInfo(Shape shape) {
+        System.out.printf("Area: %.2f%n", shape.area());
+        System.out.printf("Perimeter: %.2f%n", shape.perimeter());
+    }
+
+    public static void main(String[] args) {
+        // All shapes can be used interchangeably
+        Shape[] shapes = {
+            new Rectangle(5, 10),
+            new Circle(7),
+            new Triangle(3, 4, 5)
+        };
+
+        for (Shape shape : shapes) {
+            printShapeInfo(shape); // Same code, different behavior!
+        }
+    }
+}
 ```
+
+**Alternative: Using Abstract Class**
+```java
+abstract class AbstractShape {
+    // Concrete method
+    public void display() {
+        System.out.println("This is a shape");
+    }
+
+    // Abstract methods
+    public abstract double area();
+    public abstract double perimeter();
+}
+
+class Rectangle extends AbstractShape {
+    private double width, height;
+
+    public Rectangle(double width, double height) {
+        this.width = width;
+        this.height = height;
+    }
+
+    @Override
+    public double area() {
+        return width * height;
+    }
+
+    @Override
+    public double perimeter() {
+        return 2 * (width + height);
+    }
+}
+```
+
+</details>
+
+<details>
+<summary><b>💛 JavaScript - Shape Polymorphism</b></summary>
+
+**Modern ES6 Classes:**
+```javascript
+// Base "interface" (by convention)
+class Shape {
+    area() {
+        throw new Error('area() must be implemented');
+    }
+
+    perimeter() {
+        throw new Error('perimeter() must be implemented');
+    }
+}
+
+// Rectangle implementation
+class Rectangle extends Shape {
+    constructor(width, height) {
+        super();
+        this.width = width;
+        this.height = height;
+    }
+
+    area() {
+        return this.width * this.height;
+    }
+
+    perimeter() {
+        return 2 * (this.width + this.height);
+    }
+}
+
+// Circle implementation
+class Circle extends Shape {
+    constructor(radius) {
+        super();
+        this.radius = radius;
+    }
+
+    area() {
+        return Math.PI * this.radius ** 2;
+    }
+
+    perimeter() {
+        return 2 * Math.PI * this.radius;
+    }
+}
+
+// Triangle implementation
+class Triangle extends Shape {
+    constructor(a, b, c) {
+        super();
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+
+    area() {
+        // Heron's formula
+        const s = (this.a + this.b + this.c) / 2;
+        return Math.sqrt(s * (s - this.a) * (s - this.b) * (s - this.c));
+    }
+
+    perimeter() {
+        return this.a + this.b + this.c;
+    }
+}
+
+// Polymorphic function - works with ANY shape
+function printShapeInfo(shape) {
+    console.log(`Area: ${shape.area().toFixed(2)}`);
+    console.log(`Perimeter: ${shape.perimeter().toFixed(2)}`);
+}
+
+// All shapes can be used interchangeably
+const shapes = [
+    new Rectangle(5, 10),
+    new Circle(7),
+    new Triangle(3, 4, 5)
+];
+
+shapes.forEach(shape => {
+    printShapeInfo(shape); // Same code, different behavior!
+});
+```
+
+**TypeScript with Interfaces (type-safe):**
+```typescript
+// Real interface (TypeScript)
+interface Shape {
+    area(): number;
+    perimeter(): number;
+}
+
+class Rectangle implements Shape {
+    constructor(
+        private width: number,
+        private height: number
+    ) {}
+
+    area(): number {
+        return this.width * this.height;
+    }
+
+    perimeter(): number {
+        return 2 * (this.width + this.height);
+    }
+}
+
+class Circle implements Shape {
+    constructor(private radius: number) {}
+
+    area(): number {
+        return Math.PI * this.radius ** 2;
+    }
+
+    perimeter(): number {
+        return 2 * Math.PI * this.radius;
+    }
+}
+
+// Type-safe polymorphism
+function printShapeInfo(shape: Shape): void {
+    console.log(`Area: ${shape.area().toFixed(2)}`);
+    console.log(`Perimeter: ${shape.perimeter().toFixed(2)}`);
+}
+```
+
+**Duck Typing (JavaScript style):**
+```javascript
+// No inheritance needed - just matching methods
+const dog = {
+    speak() { return "Woof!"; }
+};
+
+const cat = {
+    speak() { return "Meow!"; }
+};
+
+const robot = {
+    speak() { return "Beep boop!"; }
+};
+
+// Works with any object that has speak()
+function makeItSpeak(thing) {
+    console.log(thing.speak());
+}
+
+makeItSpeak(dog);    // Woof!
+makeItSpeak(cat);    // Meow!
+makeItSpeak(robot);  // Beep boop!
+```
+
+</details>
+
+---
+
+### Language Comparison - Polymorphism
+
+| Feature | Python | Go | Java | JavaScript |
+|---------|--------|-----|------|------------|
+| **Mechanism** | Inheritance + Duck Typing | Interfaces (implicit) | Interfaces + Inheritance | Inheritance + Duck Typing |
+| **Type Checking** | Runtime (duck typing) | Compile-time (interfaces) | Compile-time (explicit) | Runtime (or TS compile-time) |
+| **Flexibility** | Very flexible (duck typing) | Explicit interfaces | Strict interfaces | Very flexible (dynamic) |
+| **Operator Overload** | ✅ Yes (`__add__`, etc.) | ❌ No | ❌ No (limited) | ❌ No |
+| **Best for** | Rapid prototyping | Clear contracts | Type safety | Quick prototyping |
+
+---
+
 
 ---
 

@@ -1,5 +1,9 @@
 # Design a Vending Machine
 
+> **🌍 Multi-Language Note:** This solution is in Python. For implementations in **Go, Java, and JavaScript**:
+> - [Complete Interview Walkthrough - Multi-Language](../../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md#walkthrough-2-vending-machine)
+> - [Language Comparison Guide](../../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+
 ## Problem Statement
 
 Design a vending machine system that can:

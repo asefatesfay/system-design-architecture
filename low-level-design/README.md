@@ -2,6 +2,20 @@
 
 Welcome to your comprehensive guide to mastering Low-Level Design! This resource will take you from zero to interview-ready with structured content, practical examples, and hands-on problems.
 
+## 🌍 Multi-Language Support
+
+**All examples now available in Python, Go, Java, and JavaScript!**
+
+- **Python** 🐍 - Most common for interviews (Google, Meta, startups)
+- **Go** 🔷 - Systems roles (Google, Uber, cloud companies)
+- **Java** ☕ - Enterprise (Amazon, Microsoft, banks)
+- **JavaScript** 💛 - Full-stack/web roles
+
+**Key Multi-Language Resources:**
+- [Four Pillars of OOP - All Languages](./03-oop-fundamentals/four-pillars.md) ⭐⭐⭐
+- [Complete Interview Walkthroughs - Multi-Language](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) ⭐⭐⭐
+- [Language Comparison Guide](./lld-coding/multi-language/LANGUAGE-COMPARISON.md) ⭐⭐⭐
+
 ## 📚 What You'll Learn
 
 This guide covers everything you need to excel in LLD interviews at top tech companies like Google, Amazon, Meta, Microsoft, and leading startups.

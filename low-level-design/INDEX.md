@@ -26,6 +26,35 @@ Your comprehensive guide to mastering Low-Level Design interviews. Everything yo
 | [INDEX.md](./INDEX.md) | This file - complete index | 5 min |
 
 
+### 🌍 Multi-Language Examples (NEW!)
+
+**Want to see examples in your language?** → [Multi-Language Guide](./lld-coding/multi-language/)
+
+All key examples now available in **Python, Go, Java, and JavaScript** side-by-side!
+
+| Category | What It Includes | Why Useful |
+|----------|------------------|------------|
+| [**Four Pillars of OOP**](./03-oop-fundamentals/four-pillars.md) | All 4 pillars in all 4 languages | ⭐⭐⭐ **UPDATED!** |
+| [**Classes & Objects**](./03-oop-fundamentals/classes-and-objects.md) | Complete class examples in all 4 languages | ⭐⭐⭐ **UPDATED!** |
+| [**Interview Walkthroughs**](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) | 3 complete problems in all 4 languages | ⭐⭐⭐ Essential |
+| [Language Comparison](./lld-coding/multi-language/LANGUAGE-COMPARISON.md) | Complete guide to choosing your language | ⭐⭐⭐ Essential |
+| [Basic Classes](./lld-coding/multi-language/01-basic-classes/) | BankAccount in all 4 languages | Start here |
+| [Page View Counter](./lld-coding/multi-language/04-page-view-counter/) | Race conditions in all 4 languages | ⭐⭐⭐ Critical |
+| [Condition Examples](./lld-coding/condition-examples.py) | Producer-Consumer, Connection Pool | Advanced |
+
+**Languages Covered**:
+- 🐍 **Python** - Most readable, best for interviews (Google, Meta, startups)
+- 🔷 **Go** - True concurrency, simple syntax (Google, Uber, cloud companies)
+- ☕ **Java** - Industry standard, verbose but explicit (Amazon, Microsoft, enterprise)
+- 💛 **JavaScript** - Full-stack, async-first (Frontend, Node.js, web companies)
+
+**Quick comparison**:
+- **Fastest to write**: Python
+- **Best concurrency**: Go
+- **Most explicit**: Java
+- **Best for web**: JavaScript
+
+
 ### 🏢 Real Company Examples (NEW!)
 
 | Document | Companies | Topics | Importance |

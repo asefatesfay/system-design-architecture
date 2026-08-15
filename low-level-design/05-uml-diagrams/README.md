@@ -1,5 +1,10 @@
 # UML Diagrams for LLD
 
+> **💡 From Diagrams to Code:** UML is language-agnostic, but see how designs translate to code:
+> - [Complete Interview Walkthroughs](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - Design → Code in all languages
+> - [Practice Problems](../07-practice-problems/) - Class diagrams with full implementations
+> - [Four Pillars Examples](../03-oop-fundamentals/four-pillars.md) - OOP relationships in all languages
+
 UML (Unified Modeling Language) diagrams help visualize your design. While perfect UML isn't required in interviews, being able to quickly sketch class relationships is valuable.
 
 ## Why UML Matters

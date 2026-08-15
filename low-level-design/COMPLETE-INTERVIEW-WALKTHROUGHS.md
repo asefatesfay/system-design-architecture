@@ -2,6 +2,9 @@
 
 Real-world interview examples walked through from start to finish, showing exactly what to say and do at each step.
 
+> **🌍 Multi-Language Support:** All examples are now available in **Python, Go, Java, and JavaScript**!
+> See the [Multi-Language Version](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) for complete implementations in all languages, or continue reading below where key examples include collapsible sections for each language.
+
 ---
 
 ## 📖 How to Use This Guide

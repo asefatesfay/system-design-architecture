@@ -1,5 +1,12 @@
 # OOP Fundamentals
 
+> **🌍 Multi-Language Support:** Core concepts now available in multiple languages:
+> - **[Four Pillars - All Languages](./four-pillars.md)** ⭐⭐⭐ Python, Go, Java, JavaScript
+> - **[Classes & Objects - Multi-Language](./classes-and-objects.md)** Python, Go, Java, JavaScript
+> - **[Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)** - Choose your language
+>
+> Examples below use Python for clarity. Click the links above for other languages.
+
 Object-Oriented Programming (OOP) is the foundation of Low-Level Design. This section covers everything you need to master OOP concepts for LLD interviews.
 
 ## Contents

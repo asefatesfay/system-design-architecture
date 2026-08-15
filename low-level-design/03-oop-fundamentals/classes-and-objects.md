@@ -268,6 +268,12 @@ print([point])      # [Point(x=3, y=4)] - lists use __repr__
 
 ## Real-World Example: Movie Class
 
+
+### Multi-Language Implementation
+
+<details open>
+<summary><b>🐍 Python - Movie Class</b></summary>
+
 ```python
 from datetime import datetime
 
@@ -336,6 +342,383 @@ print(f"Average rating: {inception.get_average_rating():.2f}")
 print(f"Recently released: {inception.is_recently_released()}")
 print(f"Total movies in system: {Movie.total_movies}")
 ```
+
+</details>
+
+<details>
+<summary><b>🔷 Go - Movie Struct</b></summary>
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+// Class variable equivalent (package-level)
+var totalMovies int
+
+// Movie struct (equivalent to class)
+type Movie struct {
+	MovieID     int
+	Title       string
+	Genre       string
+	Duration    int // minutes
+	ReleaseDate time.Time
+	Ratings     []int
+}
+
+// Constructor function
+func NewMovie(movieID int, title, genre string, duration int, releaseDate time.Time) *Movie {
+	totalMovies++ // Update package-level "class" variable
+	return &Movie{
+		MovieID:     movieID,
+		Title:       title,
+		Genre:       genre,
+		Duration:    duration,
+		ReleaseDate: releaseDate,
+		Ratings:     make([]int, 0),
+	}
+}
+
+// Instance method - Add rating
+func (m *Movie) AddRating(rating int) bool {
+	if rating >= 1 && rating <= 5 {
+		m.Ratings = append(m.Ratings, rating)
+		return true
+	}
+	return false
+}
+
+// Instance method - Get average rating
+func (m *Movie) GetAverageRating() float64 {
+	if len(m.Ratings) == 0 {
+		return 0.0
+	}
+	sum := 0
+	for _, rating := range m.Ratings {
+		sum += rating
+	}
+	return float64(sum) / float64(len(m.Ratings))
+}
+
+// Instance method - Check if recently released
+func (m *Movie) IsRecentlyReleased(days int) bool {
+	today := time.Now()
+	daysSinceRelease := int(today.Sub(m.ReleaseDate).Hours() / 24)
+	return daysSinceRelease <= days
+}
+
+// String method (equivalent to __str__)
+func (m *Movie) String() string {
+	avgRating := m.GetAverageRating()
+	return fmt.Sprintf("%s (%s) - %.1f★", m.Title, m.Genre, avgRating)
+}
+
+// GoString method (equivalent to __repr__)
+func (m *Movie) GoString() string {
+	return fmt.Sprintf("Movie{id=%d, title='%s'}", m.MovieID, m.Title)
+}
+
+func main() {
+	// Usage
+	inception := NewMovie(
+		1,
+		"Inception",
+		"Sci-Fi",
+		148,
+		time.Date(2010, 7, 16, 0, 0, 0, 0, time.UTC),
+	)
+
+	inception.AddRating(5)
+	inception.AddRating(4)
+	inception.AddRating(5)
+
+	fmt.Println(inception) // Inception (Sci-Fi) - 4.7★
+	fmt.Printf("Average rating: %.2f\n", inception.GetAverageRating())
+	fmt.Printf("Recently released: %v\n", inception.IsRecentlyReleased(30))
+	fmt.Printf("Total movies in system: %d\n", totalMovies)
+}
+```
+
+**Key Go Concepts:**
+- Use `NewMovie()` constructor function
+- `totalMovies` at package level (shared state)
+- `String()` method for formatting
+- Methods have receiver `(m *Movie)`
+
+</details>
+
+<details>
+<summary><b>☕ Java - Movie Class</b></summary>
+
+```java
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+
+public class Movie {
+    // Class variable (static)
+    private static int totalMovies = 0;
+
+    // Instance variables
+    private int movieId;
+    private String title;
+    private String genre;
+    private int duration; // minutes
+    private LocalDate releaseDate;
+    private List<Integer> ratings;
+
+    // Constructor
+    public Movie(int movieId, String title, String genre, int duration, LocalDate releaseDate) {
+        this.movieId = movieId;
+        this.title = title;
+        this.genre = genre;
+        this.duration = duration;
+        this.releaseDate = releaseDate;
+        this.ratings = new ArrayList<>();
+
+        // Update class variable
+        totalMovies++;
+    }
+
+    // Instance method - Add rating
+    public boolean addRating(int rating) {
+        if (rating >= 1 && rating <= 5) {
+            ratings.add(rating);
+            return true;
+        }
+        return false;
+    }
+
+    // Instance method - Get average rating
+    public double getAverageRating() {
+        if (ratings.isEmpty()) {
+            return 0.0;
+        }
+        int sum = 0;
+        for (int rating : ratings) {
+            sum += rating;
+        }
+        return (double) sum / ratings.size();
+    }
+
+    // Instance method - Check if recently released
+    public boolean isRecentlyReleased(int days) {
+        LocalDate today = LocalDate.now();
+        long daysSinceRelease = ChronoUnit.DAYS.between(releaseDate, today);
+        return daysSinceRelease <= days;
+    }
+
+    // Getters
+    public int getMovieId() {
+        return movieId;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public static int getTotalMovies() {
+        return totalMovies;
+    }
+
+    // toString (equivalent to __str__)
+    @Override
+    public String toString() {
+        double avgRating = getAverageRating();
+        return String.format("%s (%s) - %.1f★", title, genre, avgRating);
+    }
+
+    // Usage example
+    public static void main(String[] args) {
+        Movie inception = new Movie(
+            1,
+            "Inception",
+            "Sci-Fi",
+            148,
+            LocalDate.of(2010, 7, 16)
+        );
+
+        inception.addRating(5);
+        inception.addRating(4);
+        inception.addRating(5);
+
+        System.out.println(inception); // Inception (Sci-Fi) - 4.7★
+        System.out.printf("Average rating: %.2f%n", inception.getAverageRating());
+        System.out.printf("Recently released: %b%n", inception.isRecentlyReleased(30));
+        System.out.printf("Total movies in system: %d%n", Movie.getTotalMovies());
+    }
+}
+```
+
+**Key Java Concepts:**
+- `static` keyword for class variables
+- Explicit getters/setters
+- `@Override` for toString()
+- `LocalDate` for date handling
+- `List<Integer>` for typed collections
+
+</details>
+
+<details>
+<summary><b>💛 JavaScript - Movie Class</b></summary>
+
+**Modern ES6 Classes:**
+```javascript
+class Movie {
+    // Class variable (static)
+    static totalMovies = 0;
+
+    constructor(movieId, title, genre, duration, releaseDate) {
+        // Instance variables
+        this.movieId = movieId;
+        this.title = title;
+        this.genre = genre;
+        this.duration = duration; // minutes
+        this.releaseDate = releaseDate;
+        this.ratings = [];
+
+        // Update class variable
+        Movie.totalMovies++;
+    }
+
+    // Instance method - Add rating
+    addRating(rating) {
+        if (rating >= 1 && rating <= 5) {
+            this.ratings.push(rating);
+            return true;
+        }
+        return false;
+    }
+
+    // Instance method - Get average rating
+    getAverageRating() {
+        if (this.ratings.length === 0) {
+            return 0.0;
+        }
+        const sum = this.ratings.reduce((acc, rating) => acc + rating, 0);
+        return sum / this.ratings.length;
+    }
+
+    // Instance method - Check if recently released
+    isRecentlyReleased(days = 30) {
+        const today = new Date();
+        const daysSinceRelease = Math.floor(
+            (today - this.releaseDate) / (1000 * 60 * 60 * 24)
+        );
+        return daysSinceRelease <= days;
+    }
+
+    // toString (equivalent to __str__)
+    toString() {
+        const avgRating = this.getAverageRating();
+        return `${this.title} (${this.genre}) - ${avgRating.toFixed(1)}★`;
+    }
+
+    // Custom inspect (Node.js equivalent to __repr__)
+    [Symbol.for('nodejs.util.inspect.custom')]() {
+        return `Movie(id=${this.movieId}, title='${this.title}')`;
+    }
+
+    // Static method to get total
+    static getTotalMovies() {
+        return Movie.totalMovies;
+    }
+}
+
+// Usage
+const inception = new Movie(
+    1,
+    'Inception',
+    'Sci-Fi',
+    148,
+    new Date(2010, 6, 16) // Note: month is 0-indexed in JS
+);
+
+inception.addRating(5);
+inception.addRating(4);
+inception.addRating(5);
+
+console.log(inception.toString()); // Inception (Sci-Fi) - 4.7★
+console.log(`Average rating: ${inception.getAverageRating().toFixed(2)}`);
+console.log(`Recently released: ${inception.isRecentlyReleased()}`);
+console.log(`Total movies in system: ${Movie.getTotalMovies()}`);
+```
+
+**TypeScript Version (with types):**
+```typescript
+class Movie {
+    static totalMovies: number = 0;
+
+    private ratings: number[] = [];
+
+    constructor(
+        public movieId: number,
+        public title: string,
+        public genre: string,
+        public duration: number,
+        public releaseDate: Date
+    ) {
+        Movie.totalMovies++;
+    }
+
+    addRating(rating: number): boolean {
+        if (rating >= 1 && rating <= 5) {
+            this.ratings.push(rating);
+            return true;
+        }
+        return false;
+    }
+
+    getAverageRating(): number {
+        if (this.ratings.length === 0) {
+            return 0.0;
+        }
+        const sum = this.ratings.reduce((acc, r) => acc + r, 0);
+        return sum / this.ratings.length;
+    }
+
+    isRecentlyReleased(days: number = 30): boolean {
+        const today = new Date();
+        const daysSinceRelease = Math.floor(
+            (today.getTime() - this.releaseDate.getTime()) / (1000 * 60 * 60 * 24)
+        );
+        return daysSinceRelease <= days;
+    }
+
+    toString(): string {
+        const avgRating = this.getAverageRating();
+        return `${this.title} (${this.genre}) - ${avgRating.toFixed(1)}★`;
+    }
+}
+```
+
+**Key JavaScript Concepts:**
+- `static` keyword for class variables
+- `Date` object for date handling
+- `reduce()` for array operations
+- ES6 class syntax
+- TypeScript adds type safety
+
+</details>
+
+---
+
+### Language Comparison - Class Structure
+
+| Feature | Python | Go | Java | JavaScript |
+|---------|--------|-----|------|------------|
+| **Class Definition** | `class Movie:` | `type Movie struct` | `public class Movie` | `class Movie` |
+| **Constructor** | `__init__(self, ...)` | `NewMovie(...)` function | `public Movie(...)` | `constructor(...)` |
+| **Instance Variables** | `self.title` | `m.Title` | `this.title` | `this.title` |
+| **Class Variables** | `Movie.total_movies` | `totalMovies` (package-level) | `static totalMovies` | `static totalMovies` |
+| **Methods** | `def method(self):` | `func (m *Movie) Method()` | `public returnType method()` | `method() { }` |
+| **String Representation** | `__str__` | `String()` | `toString()` | `toString()` |
+| **Date Handling** | `datetime` | `time.Time` | `LocalDate` | `Date` |
+
 
 ## Object Lifecycle
 

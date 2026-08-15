@@ -2,6 +2,17 @@
 
 Complete guide to acing Low-Level Design interviews at top tech companies.
 
+> **🌍 Language Preparation:** Choose your interview language wisely:
+> - **Most recommended**: Python 🐍 (fastest to write, most interviewers know it)
+> - **Systems roles**: Go 🔷 (clean concurrency)
+> - **Enterprise/Amazon**: Java ☕ (what they expect)
+> - **Full-stack/Web**: JavaScript 💛 (for web-focused roles)
+>
+> Resources:
+> - [Choose Your Language](./lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Detailed comparison
+> - [Practice in All Languages](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - Side-by-side examples
+> - [Four Pillars - Multi-Language](./03-oop-fundamentals/four-pillars.md) - Core concepts in all 4
+
 ## Table of Contents
 
 1. [Before the Interview](#before-the-interview)

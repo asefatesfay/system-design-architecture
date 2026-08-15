@@ -1,5 +1,11 @@
 # Design Patterns
 
+> **🌍 Multi-Language Support:** Design patterns work in all languages:
+> - **Python, Go, Java, JavaScript** - See [Language Comparison - Design Patterns](../lld-coding/multi-language/LANGUAGE-COMPARISON.md#4-design-patterns-syntax)
+> - **Strategy Pattern Examples** - See [strategy.md](./strategy.md) and [Four Pillars - Abstraction](../03-oop-fundamentals/four-pillars.md#2-abstraction)
+> - **Observer Pattern Examples** - See [observer.md](./observer.md)
+> - **Complete Implementations** - [Interview Walkthroughs Multi-Language](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
+
 Design patterns are proven solutions to recurring problems in software design. For LLD interviews, you need to know the most commonly used patterns.
 
 ## Why Design Patterns Matter

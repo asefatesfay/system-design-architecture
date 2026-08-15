@@ -1,5 +1,9 @@
 # Design an LRU Cache
 
+> **🌍 Multi-Language Note:** This solution is in Python. For implementations in other languages:
+> - [Language Comparison Guide](../../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+> - [Core OOP Multi-Language Examples](../../03-oop-fundamentals/four-pillars.md)
+
 ## Problem Statement
 
 Design and implement a data structure for a **Least Recently Used (LRU) cache**. The cache should:

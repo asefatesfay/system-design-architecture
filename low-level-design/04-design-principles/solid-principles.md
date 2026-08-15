@@ -2,6 +2,12 @@
 
 SOLID is an acronym for five design principles that make software more maintainable, flexible, and scalable. These principles are **CRITICAL** for LLD interviews - you must know them well!
 
+> **🌍 Multi-Language Support:** Examples in this guide use Python for clarity. For implementations in your preferred language:
+> - **Python** - Examples below (most common for interviews)
+> - **Go, Java, JavaScript** - See [Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+> - **Core OOP Concepts** - [Four Pillars Multi-Language](../03-oop-fundamentals/four-pillars.md)
+> - **Complete Examples** - [Interview Walkthroughs Multi-Language](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
+
 ## Overview
 
 - **S** - Single Responsibility Principle

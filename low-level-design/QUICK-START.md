@@ -4,6 +4,10 @@
 
 This is your **fast track** to Low-Level Design mastery. Follow this path to quickly get up to speed.
 
+> **🌍 Language Choice:** Most examples use Python (best for interviews). Need another language?
+> - [Choose Your Language](./lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Python, Go, Java, JavaScript comparison
+> - [Multi-Language Examples](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - All problems in all languages
+
 ## Day 1: Understanding LLD (2 hours)
 
 ### Morning (1 hour)

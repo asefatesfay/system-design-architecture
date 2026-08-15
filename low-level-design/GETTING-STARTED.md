@@ -2,6 +2,11 @@
 
 Welcome! This guide will help you navigate the LLD learning resources and get the most out of them.
 
+> **🌍 Multi-Language Support:** All core concepts are now available in **Python, Go, Java, and JavaScript**!
+> - [Choose Your Interview Language](./lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+> - [Four Pillars - All Languages](./03-oop-fundamentals/four-pillars.md)
+> - [Complete Walkthroughs - Multi-Language](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
+
 ## 📦 What's Included
 
 This comprehensive LLD walkthrough includes:

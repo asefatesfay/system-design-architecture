@@ -1,5 +1,16 @@
 # Machine Coding Interviews
 
+> **🌍 Language Choice:** Machine coding requires working code in your chosen language.
+> - **Python** 🐍 - Fast to write, most flexible (recommended for speed)
+> - **Go** 🔷 - Clean and fast, good for systems problems
+> - **Java** ☕ - Verbose but explicit, common at enterprise companies
+> - **JavaScript** 💛 - Good for web-focused roles
+>
+> Resources:
+> - [Choose Your Language](../lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Pros/cons comparison
+> - [Complete Working Examples](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - All languages
+> - [Practice Problems](../07-practice-problems/) - Full implementations
+
 ## Overview
 
 Machine coding rounds are especially common at **Indian tech companies and startups** (Flipkart, Swiggy, Zepto, Razorpay, CRED, etc.). Unlike OOD interviews where pseudocode is acceptable, here you must build a **complete, working solution**.

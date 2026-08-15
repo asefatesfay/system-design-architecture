@@ -2,6 +2,14 @@
 
 Real-world examples showing why concurrency matters and how to handle it correctly.
 
+> **🌍 Concurrency Across Languages:** Each language handles concurrency differently:
+> - **Python** 🐍 - Examples below (threading.Lock, GIL limitations)
+> - **Go** 🔷 - [Page View Counter](./lld-coding/multi-language/04-page-view-counter/) - Goroutines & channels (true parallelism)
+> - **Java** ☕ - synchronized, AtomicInteger, concurrent collections
+> - **JavaScript** 💛 - Single-threaded event loop, Worker threads, Atomics
+>
+> See: [Language Comparison - Concurrency](./lld-coding/multi-language/LANGUAGE-COMPARISON.md#3-concurrency-primitives)
+
 ---
 
 ## Table of Contents

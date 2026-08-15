@@ -7,6 +7,10 @@
 **Type**: Behavioral Pattern
 **Interview Frequency**: ⭐⭐⭐ VERY HIGH
 
+> **🌍 Multi-Language Note:** Examples use Python. For other languages:
+> - [Language Comparison - Strategy Pattern](../lld-coding/multi-language/LANGUAGE-COMPARISON.md#design-patterns-syntax)
+> - [Abstraction Multi-Language](../03-oop-fundamentals/four-pillars.md#2-abstraction) - Shows interface-based patterns in all languages
+
 ## When to Use
 
 - You have multiple ways to accomplish the same task

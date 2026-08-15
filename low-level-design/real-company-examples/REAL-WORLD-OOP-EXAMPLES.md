@@ -1,5 +1,12 @@
 # Real-World OOP Examples - From Daily Life to Code
 
+> **🌍 Multi-Language Support:** Examples use Python for clarity. For complete multi-language implementations:
+> - **[Four Pillars - All Languages](../03-oop-fundamentals/four-pillars.md)** ⭐⭐⭐ - Python, Go, Java, JavaScript side-by-side
+> - **[Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)** - Choose your interview language
+> - **[Complete Interview Examples](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)** - Practice in all 4 languages
+>
+> This guide focuses on WHY concepts matter. For HOW to implement them in your language, see the links above.
+
 This guide shows how **Abstraction, Encapsulation, Inheritance, and Polymorphism** appear in everyday life, then translates them into code.
 
 ## 📑 Table of Contents

@@ -1,5 +1,13 @@
 # Concurrency Design Interviews
 
+> **🌍 Multi-Language Support:** Concurrency examples are provided in multiple languages:
+> - **Python** 🐍 - Examples below (threading module)
+> - **Go** 🔷 - See [Page View Counter - Race Conditions](../lld-coding/multi-language/04-page-view-counter/) for goroutines & channels
+> - **Java** ☕ - See [Concurrency Deep Dive](../CONCURRENCY-DEEP-DIVE.md) for synchronized, AtomicInteger, etc.
+> - **JavaScript** 💛 - See Worker threads and Atomics examples
+>
+> For language comparison: [LANGUAGE-COMPARISON.md - Concurrency](../lld-coding/multi-language/LANGUAGE-COMPARISON.md#3-concurrency-primitives)
+
 ## Overview
 
 Concurrency interviews focus on designing systems that work correctly when multiple threads access shared data simultaneously. These can appear as standalone problems or as extensions to regular LLD questions.

@@ -2,6 +2,11 @@
 
 Production-grade low-level design examples from major tech companies. All examples include complete, runnable Python implementations with design patterns and SOLID principles.
 
+> **📝 Language Note:** These examples are currently in Python (most common for LLD interviews). For language-specific syntax and patterns, see:
+> - [Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Python vs Go vs Java vs JavaScript
+> - [Four Pillars Multi-Language](../03-oop-fundamentals/four-pillars.md) - Core OOP concepts in all 4 languages
+> - [Basic Classes Multi-Language](../03-oop-fundamentals/classes-and-objects.md) - Class structure in all 4 languages
+
 ## 📑 Complete Index
 
 ### Part 1: API Protection & Communication

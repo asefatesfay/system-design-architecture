@@ -1,5 +1,9 @@
 # Design a Parking Lot System
 
+> **🌍 Multi-Language Note:** This solution is in Python. For complete implementations in **Go, Java, and JavaScript**:
+> - [Complete Interview Walkthrough - Multi-Language](../../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md#walkthrough-1-parking-lot-system)
+> - [Language Comparison Guide](../../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+
 ## Problem Statement
 
 Design a parking lot system that can:

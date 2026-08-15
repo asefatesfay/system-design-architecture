@@ -1,5 +1,9 @@
 # Design an Elevator System
 
+> **🌍 Multi-Language Note:** This solution is in Python. For implementations in other languages:
+> - [Language Comparison Guide](../../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+> - [Core OOP Multi-Language Examples](../../03-oop-fundamentals/four-pillars.md)
+
 ## Problem Statement
 
 Design an elevator control system for a building that can:

@@ -8,6 +8,10 @@
 **Interview Frequency**: ⭐⭐⭐ VERY HIGH
 **Also Known As**: Publish-Subscribe, Event-Subscriber, Listener
 
+> **🌍 Multi-Language Note:** Examples use Python. For other languages:
+> - [Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
+> - [Multi-Language Interview Examples](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
+
 ## When to Use
 
 - One object change should notify multiple other objects

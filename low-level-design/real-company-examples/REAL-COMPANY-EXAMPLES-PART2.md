@@ -2,6 +2,12 @@
 
 Continuation of real-world low-level design examples from major tech companies.
 
+> **📝 Language Note:** Examples use Python (most common for LLD interviews). For language-specific patterns:
+> - [Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Python vs Go vs Java vs JavaScript
+> - [Four Pillars Multi-Language](../03-oop-fundamentals/four-pillars.md) - Core OOP in all 4 languages
+> - [Design Patterns](../06-design-patterns/) - Strategy, Observer, Factory patterns
+> - [Part 1](./REAL-COMPANY-EXAMPLES.md) - Rate Limiter, Notifications, Ride Matching
+
 ---
 
 # 6. URL Shortener - bit.ly, TinyURL
