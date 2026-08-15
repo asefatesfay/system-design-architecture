@@ -1,7 +1,7 @@
 # Real-World OOP Examples - From Daily Life to Code
 
 > **🌍 Multi-Language Support:** Examples use Python for clarity. For complete multi-language implementations:
-> - **[Four Pillars - All Languages](../03-oop-fundamentals/four-pillars.md)** ⭐⭐⭐ - Python, Go, Java, JavaScript side-by-side
+> - **[Four Pillars - All Languages](../03-oop-fundamentals/four-pillars/)** ⭐⭐⭐ - Python, Go, Java, JavaScript side-by-side
 > - **[Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)** - Choose your interview language
 > - **[Complete Interview Examples](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)** - Practice in all 4 languages
 >

@@ -3,7 +3,7 @@
 Understanding **why** good design matters through real-world analogies, consequences, and before/after examples.
 
 > **💡 From Concepts to Code:** Once you understand WHY, see HOW in your language:
-> - [Four Pillars - All Languages](./03-oop-fundamentals/four-pillars.md) - Encapsulation, Abstraction, Inheritance, Polymorphism
+> - [Four Pillars - All Languages](./03-oop-fundamentals/four-pillars/) - Encapsulation, Abstraction, Inheritance, Polymorphism
 > - [SOLID Principles](./04-design-principles/solid-principles.md) - With examples
 > - [Complete Interview Examples](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - Python, Go, Java, JavaScript
 > - [Real Company Examples](./real-company-examples/REAL-COMPANY-EXAMPLES.md) - Production systems

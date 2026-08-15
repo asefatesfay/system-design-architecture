@@ -34,8 +34,8 @@ All key examples now available in **Python, Go, Java, and JavaScript** side-by-s
 
 | Category | What It Includes | Why Useful |
 |----------|------------------|------------|
-| [**Four Pillars of OOP**](./03-oop-fundamentals/four-pillars.md) | All 4 pillars in all 4 languages | ⭐⭐⭐ **UPDATED!** |
-| [**Classes & Objects**](./03-oop-fundamentals/classes-and-objects.md) | Complete class examples in all 4 languages | ⭐⭐⭐ **UPDATED!** |
+| [**Four Pillars of OOP**](./03-oop-fundamentals/four-pillars/) | All 4 pillars in all 4 languages | ⭐⭐⭐ **UPDATED!** |
+| [**Classes & Objects**](./03-oop-fundamentals/classes-and-objects/) | Complete class examples in all 4 languages | ⭐⭐⭐ **UPDATED!** |
 | [**Interview Walkthroughs**](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) | 3 complete problems in all 4 languages | ⭐⭐⭐ Essential |
 | [Language Comparison](./lld-coding/multi-language/LANGUAGE-COMPARISON.md) | Complete guide to choosing your language | ⭐⭐⭐ Essential |
 | [Basic Classes](./lld-coding/multi-language/01-basic-classes/) | BankAccount in all 4 languages | Start here |
@@ -105,8 +105,8 @@ All key examples now available in **Python, Go, Java, and JavaScript** side-by-s
 | File | Topics Covered | Importance |
 |------|----------------|------------|
 | [README.md](./03-oop-fundamentals/README.md) | OOP overview | ⭐ Reference |
-| [classes-and-objects.md](./03-oop-fundamentals/classes-and-objects.md) | Classes, objects, methods | ⭐⭐⭐ Essential |
-| [four-pillars.md](./03-oop-fundamentals/four-pillars.md) | Encapsulation, Abstraction, Inheritance, Polymorphism | ⭐⭐⭐ Critical |
+| [classes-and-objects/](./03-oop-fundamentals/classes-and-objects/) | Classes, objects, methods | ⭐⭐⭐ Essential |
+| [four-pillars/](./03-oop-fundamentals/four-pillars/) | Encapsulation, Abstraction, Inheritance, Polymorphism | ⭐⭐⭐ Critical |
 
 **Key Concepts**: The 4 pillars, class design, relationships
 
@@ -168,8 +168,8 @@ Each problem includes:
 Week 1-2: Foundations
 ├── what-is-lld.md
 ├── lld-vs-hld.md
-├── classes-and-objects.md
-└── four-pillars.md
+├── classes-and-objects/
+└── four-pillars/
 
 Week 3-4: Design Principles
 ├── solid-principles.md (⭐ CRITICAL)
@@ -190,7 +190,7 @@ Week 7-8: Interview Prep
 
 ```
 Day 1: OOP Review
-├── four-pillars.md
+├── four-pillars/
 └── solid-principles.md
 
 Day 2-3: Key Patterns
@@ -334,7 +334,7 @@ Use this to track your learning:
    - Referenced in 90% of interviews
    - Foundation of good design
 
-2. **[Four Pillars of OOP](./03-oop-fundamentals/four-pillars.md)** ⭐⭐⭐
+2. **[Four Pillars of OOP](./03-oop-fundamentals/four-pillars/)** ⭐⭐⭐
    - Fundamental concepts
    - Must know cold
 

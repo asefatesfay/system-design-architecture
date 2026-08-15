@@ -4,7 +4,7 @@ Welcome! This guide will help you navigate the LLD learning resources and get th
 
 > **🌍 Multi-Language Support:** All core concepts are now available in **Python, Go, Java, and JavaScript**!
 > - [Choose Your Interview Language](./lld-coding/multi-language/LANGUAGE-COMPARISON.md)
-> - [Four Pillars - All Languages](./03-oop-fundamentals/four-pillars.md)
+> - [Four Pillars - All Languages](./03-oop-fundamentals/four-pillars/)
 > - [Complete Walkthroughs - Multi-Language](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
 
 ## 📦 What's Included
@@ -27,8 +27,8 @@ This comprehensive LLD walkthrough includes:
 
 1. Read [What is LLD?](./01-introduction/what-is-lld.md)
 2. Understand [LLD vs HLD](./01-introduction/lld-vs-hld.md)
-3. Study [Classes and Objects](./03-oop-fundamentals/classes-and-objects.md)
-4. Master [The Four Pillars](./03-oop-fundamentals/four-pillars.md)
+3. Study [Classes and Objects](./03-oop-fundamentals/classes-and-objects/)
+4. Master [The Four Pillars](./03-oop-fundamentals/four-pillars/)
    - Encapsulation
    - Abstraction
    - Inheritance
@@ -261,7 +261,7 @@ You're ready for interviews when you can:
 Ready to start? Here's your first task:
 
 1. Read [What is LLD?](./01-introduction/what-is-lld.md)
-2. Code along with [Classes and Objects](./03-oop-fundamentals/classes-and-objects.md)
+2. Code along with [Classes and Objects](./03-oop-fundamentals/classes-and-objects/)
 3. Solve the practice exercise at the end
 
 Remember: **Consistency beats intensity.** Better to practice 1 hour daily than 8 hours once a week.

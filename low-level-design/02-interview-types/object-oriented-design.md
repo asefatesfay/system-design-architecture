@@ -1,7 +1,7 @@
 # Object-Oriented Design (OOD) Interviews
 
 > **🌍 Multi-Language Support:** OOD interviews allow pseudocode or any language:
-> - **Core OOP Concepts** - [Four Pillars in All Languages](../03-oop-fundamentals/four-pillars.md)
+> - **Core OOP Concepts** - [Four Pillars in All Languages](../03-oop-fundamentals/four-pillars/)
 > - **Complete Examples** - [Interview Walkthroughs Multi-Language](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
 > - **Language Choice** - [Python vs Go vs Java vs JavaScript](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)
 > - **Practice Problems** - [07-practice-problems](../07-practice-problems/) with full implementations

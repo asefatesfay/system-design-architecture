@@ -11,7 +11,7 @@ Complete guide to acing Low-Level Design interviews at top tech companies.
 > Resources:
 > - [Choose Your Language](./lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Detailed comparison
 > - [Practice in All Languages](./COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - Side-by-side examples
-> - [Four Pillars - Multi-Language](./03-oop-fundamentals/four-pillars.md) - Core concepts in all 4
+> - [Four Pillars - Multi-Language](./03-oop-fundamentals/four-pillars/) - Core concepts in all 4
 
 ## Table of Contents
 

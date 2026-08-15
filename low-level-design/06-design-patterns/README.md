@@ -2,7 +2,7 @@
 
 > **🌍 Multi-Language Support:** Design patterns work in all languages:
 > - **Python, Go, Java, JavaScript** - See [Language Comparison - Design Patterns](../lld-coding/multi-language/LANGUAGE-COMPARISON.md#4-design-patterns-syntax)
-> - **Strategy Pattern Examples** - See [strategy.md](./strategy.md) and [Four Pillars - Abstraction](../03-oop-fundamentals/four-pillars.md#2-abstraction)
+> - **Strategy Pattern Examples** - See [strategy.md](./strategy.md) and [Four Pillars - Abstraction](../03-oop-fundamentals/four-pillars/#2-abstraction)
 > - **Observer Pattern Examples** - See [observer.md](./observer.md)
 > - **Complete Implementations** - [Interview Walkthroughs Multi-Language](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
 
@@ -15,24 +15,53 @@ Design patterns are proven solutions to recurring problems in software design. F
 3. **Interview expectation**: You'll be asked about them
 4. **Better design**: Make code more maintainable and flexible
 
-## The 10 Essential Patterns for Interviews
+## Design Patterns in This Guide
 
-### Creational Patterns (Object Creation)
-1. **[Singleton](./singleton.md)** - Ensure only one instance exists
-2. **[Factory Method](./factory.md)** - Create objects without specifying exact class
+### ✅ Creational Patterns (Object Creation)
+1. **[Singleton](./singleton.md)** ⭐⭐⭐ - Ensure only one instance exists
+   - Thread-safe implementations
+   - Metaclass approach
+   - Module-level singleton (Pythonic way)
 
-### Structural Patterns (Object Composition)
-3. **[Decorator](./decorator.md)** - Add behavior without modifying class
-4. **[Facade](./facade.md)** - Simplified interface to complex subsystem
-5. **[Composite](./composite.md)** - Tree structures (files/folders)
+2. **[Factory](./factory.md)** ⭐⭐⭐ - Create objects without specifying exact class
+   - Simple Factory
+   - Factory Method
+   - Abstract Factory
 
-### Behavioral Patterns (Object Interaction)
-6. **[Strategy](./strategy.md)** - Switch between algorithms at runtime
-7. **[Observer](./observer.md)** - Notify multiple objects of changes
-8. **[State](./state.md)** - Object behavior changes with state
-9. **[Command](./command.md)** - Encapsulate requests as objects
-10. **[Template Method](./template-method.md)** - Define algorithm skeleton
-11. **[Chain of Responsibility](./chain-of-responsibility.md)** - Pass request through chain
+3. **[Builder](./builder.md)** ⭐⭐ - Construct complex objects step-by-step
+   - Fluent interface
+   - Method chaining
+   - Validation
+
+### ✅ Structural Patterns (Object Composition)
+4. **[Adapter](./adapter.md)** ⭐⭐ - Make incompatible interfaces work together
+   - Object adapter (composition)
+   - Class adapter (inheritance)
+   - Real-world API integration
+
+5. **[Decorator](./decorator.md)** ⭐⭐⭐ - Add behavior dynamically
+   - Classic decorator pattern
+   - Python @decorator syntax
+   - Logging, caching, validation
+
+6. **[Facade](./facade.md)** ⭐⭐ - Simplified interface to complex subsystem
+   - Hide complexity
+   - Subsystem coordination
+   - Common operations
+
+7. **[Proxy](./proxy.md)** ⭐⭐ - Control access to objects
+   - Virtual proxy (lazy loading)
+   - Protection proxy (access control)
+   - Remote proxy
+   - Caching proxy
+
+### 📋 Additional Patterns (Coming Soon)
+- **Composite** - Tree structures (files/folders)
+- **Strategy** - Switch algorithms at runtime
+- **Observer** - Event notification
+- **State** - Behavior changes with state
+- **Command** - Encapsulate requests
+- **Template Method** - Algorithm skeleton
 
 ## Pattern Categories
 
@@ -159,36 +188,56 @@ car = CarBuilder()
    - Single place to control object creation
    - Easy to extend with new types
 
-## Learning Path
+## Recommended Learning Path
 
-### Week 1: Master These First (Most Common)
-1. **Strategy** - Payment methods, sorting algorithms
-2. **Observer** - Event notification systems
-3. **Factory** - Object creation
+### Phase 1: Creational Patterns (Start Here!)
+1. **[Factory](./factory.md)** - Most versatile creation pattern
+   - Start with Simple Factory
+   - Then Factory Method
+   - Finally Abstract Factory
 
-### Week 2: Important Patterns
-4. **Singleton** - Single instance
-5. **Decorator** - Add features dynamically
-6. **Facade** - Simplify complex systems
+2. **[Singleton](./singleton.md)** - Common but often misused
+   - Understand when to use
+   - Thread-safety concerns
+   - Alternatives (dependency injection)
 
-### Week 3: Complete Your Knowledge
-7. **State** - Object state management
-8. **Command** - Undo/redo functionality
-9. **Composite** - Tree structures
-10. **Template Method** - Algorithm skeleton
+3. **[Builder](./builder.md)** - Complex object construction
+   - Fluent interfaces
+   - Validation
+   - Immutable objects
+
+### Phase 2: Structural Patterns
+4. **[Adapter](./adapter.md)** - Integration essential
+   - Third-party API integration
+   - Legacy code integration
+
+5. **[Decorator](./decorator.md)** - Very flexible pattern
+   - Both OOP pattern and Python syntax
+   - Logging, caching examples
+   - Stacking decorators
+
+6. **[Facade](./facade.md)** - Simplification pattern
+   - Hide subsystem complexity
+   - Common in large systems
+
+7. **[Proxy](./proxy.md)** - Access control
+   - Lazy loading (performance)
+   - Access control (security)
+   - Caching (optimization)
 
 ## Practice Exercise
 
 **Design a Coffee Shop Ordering System**
 
-Apply these patterns:
+Apply the patterns you've learned:
 - **Factory**: Create different coffee types (Espresso, Latte, Cappuccino)
-- **Decorator**: Add extras (Milk, Sugar, Whipped Cream)
-- **Strategy**: Different pricing strategies (Regular, Happy Hour, Member)
-- **Observer**: Notify kitchen when order placed
-- **Singleton**: Coffee shop itself
+- **Builder**: Build complex orders step-by-step with customizations
+- **Decorator**: Add extras dynamically (Milk, Sugar, Whipped Cream, Caramel)
+- **Singleton**: Coffee shop configuration/settings
+- **Facade**: Simplify the ordering process (hide payment, inventory, preparation)
+- **Proxy**: Lazy load customer loyalty data, control access to premium features
 
-Try it yourself before looking at solutions!
+Try designing this yourself before looking at pattern implementations!
 
 ## Pattern Anti-Patterns
 
@@ -221,10 +270,26 @@ Try it yourself before looking at solutions!
 
 ## Next Steps
 
-Start with the most important pattern for interviews:
-**[Strategy Pattern →](./strategy.md)**
+### Start Here (Natural Learning Order)
 
-Then move through the patterns in order of importance.
+**Phase 1 - Creational Patterns:**
+1. [Factory Pattern →](./factory.md) - Master object creation first
+2. [Singleton Pattern →](./singleton.md) - Simple but important
+3. [Builder Pattern →](./builder.md) - Complex object construction
+
+**Phase 2 - Structural Patterns:**
+4. [Adapter Pattern →](./adapter.md) - Integration problems
+5. [Decorator Pattern →](./decorator.md) - Adding behavior
+6. [Facade Pattern →](./facade.md) - Simplification
+7. [Proxy Pattern →](./proxy.md) - Access control
+
+### Before Moving On
+
+Make sure you can:
+- ✅ Explain WHEN to use each pattern
+- ✅ Identify patterns in real code
+- ✅ Implement patterns without reference
+- ✅ Compare similar patterns (e.g., Proxy vs Decorator vs Adapter)
 
 ---
 

@@ -37,7 +37,7 @@ This is your **fast track** to Low-Level Design mastery. Follow this path to qui
 
 ### Morning (1.5 hours)
 ```bash
-4. low-level-design/03-oop-fundamentals/classes-and-objects.md
+4. low-level-design/03-oop-fundamentals/classes-and-objects/
 ```
 
 **Practice**:
@@ -70,7 +70,7 @@ print(account.balance)  # 1500
 
 ### Afternoon (1.5 hours)
 ```bash
-5. low-level-design/03-oop-fundamentals/four-pillars.md
+5. low-level-design/03-oop-fundamentals/four-pillars/
 ```
 
 **What you'll learn**:
@@ -345,8 +345,8 @@ low-level-design/
 │   └── concurrency-design.md
 │
 ├── 03-oop-fundamentals/
-│   ├── classes-and-objects.md         ⭐ Foundation
-│   └── four-pillars.md                ⭐ Critical
+│   ├── classes-and-objects/         ⭐ Foundation
+│   └── four-pillars/                ⭐ Critical
 │
 ├── 04-design-principles/
 │   └── solid-principles.md            ⭐⭐⭐ Most important!

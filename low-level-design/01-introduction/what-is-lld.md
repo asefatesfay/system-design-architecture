@@ -5,7 +5,7 @@
 **Low-Level Design (LLD)** is a form of software design that focuses on the implementation details of a system. It bridges the gap between high-level system architecture and actual code implementation.
 
 > **🌍 Multi-Language Note:** Examples in this guide use various languages. For comprehensive multi-language implementations:
-> - [Four Pillars of OOP](../03-oop-fundamentals/four-pillars.md) - Python, Go, Java, JavaScript
+> - [Four Pillars of OOP](../03-oop-fundamentals/four-pillars/) - Python, Go, Java, JavaScript
 > - [Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Choose your interview language
 > - [Complete Interview Walkthroughs - Multi-Language](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)
 

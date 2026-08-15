@@ -1,8 +1,8 @@
 # OOP Fundamentals
 
 > **🌍 Multi-Language Support:** Core concepts now available in multiple languages:
-> - **[Four Pillars - All Languages](./four-pillars.md)** ⭐⭐⭐ Python, Go, Java, JavaScript
-> - **[Classes & Objects - Multi-Language](./classes-and-objects.md)** Python, Go, Java, JavaScript
+> - **[Four Pillars - All Languages](./four-pillars/)** ⭐⭐⭐ Separate guides for Python, Go, Java, JavaScript
+> - **[Classes & Objects - Multi-Language](./classes-and-objects/)** Python, Go, Java, JavaScript
 > - **[Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)** - Choose your language
 >
 > Examples below use Python for clarity. Click the links above for other languages.
@@ -11,7 +11,7 @@ Object-Oriented Programming (OOP) is the foundation of Low-Level Design. This se
 
 ## Contents
 
-### 1. [Classes and Objects](./classes-and-objects.md)
+### 1. [Classes and Objects](./classes-and-objects/)
 - What are classes and objects?
 - Constructors and initialization
 - Instance vs class variables
@@ -19,8 +19,8 @@ Object-Oriented Programming (OOP) is the foundation of Low-Level Design. This se
 - `self` parameter
 - `__str__` and `__repr__`
 
-### 2. [The Four Pillars of OOP](./four-pillars.md)
-Master the core principles:
+### 2. [The Four Pillars of OOP](./four-pillars/)
+Master the core principles in Python, Go, Java, or JavaScript:
 - **Encapsulation**: Hide internal details
 - **Abstraction**: Show only essential features
 - **Inheritance**: Reuse and extend behavior
@@ -52,8 +52,8 @@ Master the core principles:
 
 ## Learning Path
 
-1. **Start with [Classes and Objects](./classes-and-objects.md)** - The building blocks
-2. **Master [The Four Pillars](./four-pillars.md)** - Essential OOP concepts
+1. **Start with [Classes and Objects](./classes-and-objects/)** - The building blocks
+2. **Master [The Four Pillars](./four-pillars/)** - Essential OOP concepts
 3. **Learn [Interfaces and Abstract Classes](./interfaces-abstract-classes.md)** - Design contracts
 4. **Understand [Relationships](./relationships.md)** - How objects connect
 5. **Study [Access Modifiers](./access-modifiers.md)** - Control visibility
@@ -148,4 +148,4 @@ Try it yourself, then check the solution in the practice problems section!
 
 ---
 
-**Start learning**: [Classes and Objects →](./classes-and-objects.md)
+**Start learning**: [Classes and Objects →](./classes-and-objects/)

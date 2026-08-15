@@ -3,7 +3,7 @@
 ## 🌍 Latest Update: Multi-Language Support!
 
 **NEW!** Core concepts now available in **Python, Go, Java, and JavaScript**:
-- **[Four Pillars - All Languages](../03-oop-fundamentals/four-pillars.md)** - Complete implementations
+- **[Four Pillars - All Languages](../03-oop-fundamentals/four-pillars/)** - Complete implementations
 - **[Interview Walkthroughs - Multi-Lang](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)** - Parking Lot, Vending Machine, Hotel Booking
 - **[Language Comparison Guide](../lld-coding/multi-language/LANGUAGE-COMPARISON.md)** - Choose your language
 

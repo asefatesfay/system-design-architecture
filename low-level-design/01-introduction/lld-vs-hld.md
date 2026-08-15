@@ -2,7 +2,7 @@
 ## A Complete Guide with Real-World Intuition
 
 > **📚 After Understanding the Difference:** Learn LLD implementation in your preferred language:
-> - [Four Pillars of OOP - Multi-Language](../03-oop-fundamentals/four-pillars.md) - Python, Go, Java, JavaScript
+> - [Four Pillars of OOP - Multi-Language](../03-oop-fundamentals/four-pillars/) - Python, Go, Java, JavaScript
 > - [Complete Interview Examples](../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md) - All 4 languages
 > - [Choose Your Language](../lld-coding/multi-language/LANGUAGE-COMPARISON.md) - Comparison guide
 

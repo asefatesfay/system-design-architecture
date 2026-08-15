@@ -1,10 +1,10 @@
 # Real-World LLD Examples & Intuitions
 
 > **🌍 Multi-Language Support:** Examples use Python for clarity. For implementations in other languages:
-> - **[Four Pillars - All Languages](../../03-oop-fundamentals/four-pillars.md)** - Python, Go, Java, JavaScript side-by-side
+> - **[Four Pillars - All Languages](../../03-oop-fundamentals/four-pillars/)** - Python, Go, Java, JavaScript side-by-side
 > - **[Complete Interview Examples](../../COMPLETE-INTERVIEW-WALKTHROUGHS-MULTILANG.md)** - All 4 languages
 > - **[Language Comparison Guide](../../lld-coding/multi-language/LANGUAGE-COMPARISON.md)** - Choose your language
-> - **[Classes & Objects Multi-Language](../../03-oop-fundamentals/classes-and-objects.md)** - Basic syntax in all languages
+> - **[Classes & Objects Multi-Language](../../03-oop-fundamentals/classes-and-objects/)** - Basic syntax in all languages
 >
 > Python is used below for readability - concepts apply to all OOP languages!
 
