@@ -79,7 +79,15 @@ Master the essential patterns - all with complete implementations:
 **Behavioral Patterns (Coming Soon):**
 - Strategy, Observer, State, Command, Template Method
 
-### 6.5 [Async Patterns](./async-patterns.md) ⭐ NEW!
+### 6.5 [Python Must-Knows](./python-must-knows.md) ⭐ NEW!
+Essential Python for LLD interviews - language refresher with real-world examples:
+- Collections (defaultdict, Counter, deque, OrderedDict)
+- List/Dict comprehensions, generators
+- Decorators, @lru_cache, @dataclass
+- Type hints, context managers, error handling
+- Common interview patterns
+
+### 6.6 [Async Patterns](./async-patterns.md) ⭐ NEW!
 Modern Python asynchronous programming:
 - `async`/`await` fundamentals
 - Producer-Consumer with asyncio

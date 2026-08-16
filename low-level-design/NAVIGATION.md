@@ -49,13 +49,14 @@ low-level-design/
 │       ├── facade.md                ⭐⭐ Simplify complexity
 │       └── proxy.md                 ⭐⭐ Access control
 │
-├── 07-practice-problems/            ← Real interview questions
-│   ├── parking-lot/
-│   ├── lru-cache/
-│   ├── vending-machine/
-│   └── elevator-system/
+├── python-must-knows.md             ← ⭐ NEW! Python language refresher
+├── async-patterns.md                ← ⭐ NEW! Asyncio & concurrency
 │
-└── async-patterns.md                ← ⭐ NEW! Asyncio & concurrency
+└── 07-practice-problems/            ← Real interview questions
+    ├── parking-lot/
+    ├── lru-cache/
+    ├── vending-machine/
+    └── elevator-system/
 
 ⭐⭐⭐ = Critical     ⭐⭐ = Important     ⭐ = Good to know
 ```
@@ -259,3 +260,12 @@ Then: [Practice Problems](./07-practice-problems/)
 Happy learning! 🎓
 
 [Back to Main README](./README.md) | [Go to Learning Guide](./LEARNING-GUIDE.md)
+
+### Python Language Features ⭐ NEW!
+| Need | Topic | File |
+|------|-------|------|
+| Collections (defaultdict, Counter, deque) | Data structures | [`python-must-knows.md`](./python-must-knows.md#1-collections--data-structures) |
+| List/Dict comprehensions | Transform data | [`python-must-knows.md`](./python-must-knows.md#2-list--dictionary-comprehensions) |
+| Generators & yield | Memory efficiency | [`python-must-knows.md`](./python-must-knows.md#3-generators--iterators) |
+| @lru_cache, @dataclass | Decorators | [`python-must-knows.md`](./python-must-knows.md#4-decorators--functools) |
+
