@@ -12,7 +12,13 @@ Essential Python concepts with real-world examples for LLD interviews.
 6. [Context Managers](#6-context-managers)
 7. [Error Handling](#7-error-handling)
 8. [Advanced Function Features](#8-advanced-function-features)
-9. [Common Patterns](#9-common-patterns)
+9. [Functional Programming](#9-functional-programming)
+10. [String Operations & Formatting](#10-string-operations--formatting)
+11. [Advanced Itertools](#11-advanced-itertools)
+12. [File & JSON Operations](#12-file--json-operations)
+13. [Modern Python Features](#13-modern-python-features)
+14. [Advanced Data Structures](#14-advanced-data-structures)
+15. [Common Patterns](#15-common-patterns)
 
 ---
 
@@ -766,7 +772,568 @@ names = list(map(lambda u: u["name"].upper(), users))
 
 ---
 
-## 9. Common Patterns
+## 9. Functional Programming
+
+### Lambda Functions
+
+```python
+# Sort by custom criteria
+users = [
+    {"name": "Alice", "age": 25, "score": 95},
+    {"name": "Bob", "age": 30, "score": 88},
+    {"name": "Charlie", "age": 20, "score": 92},
+]
+
+# Multiple sort keys
+sorted_users = sorted(users, key=lambda u: (-u["score"], u["age"]))
+print(sorted_users)  # Sorted by score desc, then age asc
+```
+
+**Real-World: Event filtering and processing**
+
+```python
+class Event:
+    def __init__(self, event_type, timestamp, user_id):
+        self.event_type = event_type
+        self.timestamp = timestamp
+        self.user_id = user_id
+
+events = [
+    Event("login", 100, "user1"),
+    Event("purchase", 200, "user2"),
+    Event("login", 150, "user1"),
+    Event("logout", 300, "user1"),
+]
+
+# Filter events by type
+logins = list(filter(lambda e: e.event_type == "login", events))
+
+# Get unique user IDs
+user_ids = set(map(lambda e: e.user_id, events))
+
+# Sort by timestamp
+sorted_events = sorted(events, key=lambda e: e.timestamp)
+```
+
+
+### map(), filter(), reduce()
+
+```python
+from functools import reduce
+
+# Map - transform each element
+numbers = [1, 2, 3, 4, 5]
+squared = list(map(lambda x: x ** 2, numbers))
+# [1, 4, 9, 16, 25]
+
+# Filter - keep only matching elements
+evens = list(filter(lambda x: x % 2 == 0, numbers))
+# [2, 4]
+
+# Reduce - accumulate to single value
+total = reduce(lambda acc, x: acc + x, numbers, 0)
+# 15
+
+# Product of all numbers
+product = reduce(lambda acc, x: acc * x, numbers, 1)
+# 120
+```
+
+**Real-World: Order processing pipeline**
+
+```python
+from functools import reduce
+from typing import List, Dict
+
+orders = [
+    {"id": 1, "items": 3, "price": 100, "status": "completed"},
+    {"id": 2, "items": 1, "price": 50, "status": "pending"},
+    {"id": 3, "items": 5, "price": 200, "status": "completed"},
+    {"id": 4, "items": 2, "price": 75, "status": "cancelled"},
+]
+
+# Filter completed orders
+completed = list(filter(lambda o: o["status"] == "completed", orders))
+
+# Calculate total revenue
+total_revenue = reduce(
+    lambda total, order: total + order["price"],
+    completed,
+    0
+)
+print(f"Total revenue: ${total_revenue}")  # $300
+
+# Apply discount (map)
+discounted = list(map(
+    lambda o: {**o, "price": o["price"] * 0.9},
+    completed
+))
+```
+
+### any() and all()
+
+```python
+# any() - at least one True
+numbers = [1, 3, 5, 7, 8]
+has_even = any(x % 2 == 0 for x in numbers)  # True
+
+# all() - all True
+all_positive = all(x > 0 for x in numbers)  # True
+```
+
+**Real-World: Validation**
+
+```python
+from typing import List, Dict
+
+class Validator:
+    @staticmethod
+    def validate_user(user: Dict) -> bool:
+        """User is valid if has all required fields"""
+        required = ["name", "email", "age"]
+        return all(field in user for field in required)
+
+    @staticmethod
+    def has_permission(user: Dict, required_permissions: List[str]) -> bool:
+        """User has at least one required permission"""
+        user_permissions = user.get("permissions", [])
+        return any(perm in user_permissions for perm in required_permissions)
+
+# Usage
+user = {
+    "name": "Alice",
+    "email": "alice@example.com",
+    "age": 25,
+    "permissions": ["read", "write"]
+}
+
+print(Validator.validate_user(user))  # True
+print(Validator.has_permission(user, ["admin", "write"]))  # True
+```
+
+---
+
+## 10. String Operations & Formatting
+
+### f-strings (Modern & Fast)
+
+```python
+name = "Alice"
+age = 25
+score = 95.567
+
+# f-string - recommended!
+message = f"{name} is {age} years old"
+
+# With expressions
+result = f"{name.upper()} scored {score:.2f}%"
+
+# Multi-line
+report = f"""
+Name: {name}
+Age: {age}
+Score: {score:.1f}%
+"""
+```
+
+**Real-World: Log formatting**
+
+```python
+from datetime import datetime
+
+class Logger:
+    def log(self, level: str, message: str, **context):
+        timestamp = datetime.now().isoformat()
+        base = f"[{timestamp}] {level.upper()}: {message}"
+
+        if context:
+            context_str = " | ".join(f"{k}={v}" for k, v in context.items())
+            return f"{base} | {context_str}"
+        return base
+
+logger = Logger()
+print(logger.log("error", "Database connection failed",
+                 host="localhost", port=5432, retry=3))
+# [2024-01-15T10:30:00] ERROR: Database connection failed | host=localhost | port=5432 | retry=3
+```
+
+### String Methods
+
+```python
+text = "  Hello World  "
+
+# Cleaning
+text.strip()        # "Hello World"
+text.lower()        # "  hello world  "
+text.upper()        # "  HELLO WORLD  "
+text.title()        # "  Hello World  "
+
+# Checking
+text.startswith("  Hello")  # True
+text.endswith("World  ")    # True
+"123".isdigit()             # True
+"abc".isalpha()             # True
+
+# Splitting/Joining
+words = text.strip().split()  # ["Hello", "World"]
+"-".join(words)               # "Hello-World"
+
+# Replacing
+text.replace("World", "Python")  # "  Hello Python  "
+```
+
+**Real-World: URL parsing and validation**
+
+```python
+class URLParser:
+    def __init__(self, url: str):
+        self.url = url
+
+    def get_domain(self) -> str:
+        """Extract domain from URL"""
+        # Remove protocol
+        without_protocol = self.url.split("://")[-1]
+        # Get domain (before /)
+        domain = without_protocol.split("/")[0]
+        return domain
+
+    def get_path(self) -> str:
+        """Extract path from URL"""
+        parts = self.url.split("://")[-1].split("/", 1)
+        return "/" + parts[1] if len(parts) > 1 else "/"
+
+    def is_secure(self) -> bool:
+        """Check if HTTPS"""
+        return self.url.startswith("https://")
+
+# Usage
+url = URLParser("https://api.example.com/v1/users/123")
+print(url.get_domain())   # api.example.com
+print(url.get_path())     # /v1/users/123
+print(url.is_secure())    # True
+```
+
+### Regular Expressions
+
+```python
+import re
+
+# Pattern matching
+text = "Contact: alice@example.com or bob@test.com"
+
+# Find all emails
+emails = re.findall(r'\b[\w.-]+@[\w.-]+\.\w+\b', text)
+# ['alice@example.com', 'bob@test.com']
+
+# Replace pattern
+cleaned = re.sub(r'\s+', ' ', "Hello    World")
+# "Hello World"
+
+# Validation
+phone_pattern = r'^\d{3}-\d{3}-\d{4}$'
+is_valid = bool(re.match(phone_pattern, "123-456-7890"))  # True
+```
+
+**Real-World: Input validation**
+
+```python
+import re
+from typing import Optional
+
+class InputValidator:
+    EMAIL_PATTERN = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+    PHONE_PATTERN = r'^\d{3}-\d{3}-\d{4}$'
+    PASSWORD_PATTERN = r'^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{8,}$'
+
+    @classmethod
+    def validate_email(cls, email: str) -> bool:
+        """Validate email format"""
+        return bool(re.match(cls.EMAIL_PATTERN, email))
+
+    @classmethod
+    def validate_phone(cls, phone: str) -> bool:
+        """Validate phone format"""
+        return bool(re.match(cls.PHONE_PATTERN, phone))
+
+    @classmethod
+    def validate_password(cls, password: str) -> bool:
+        """Password: 8+ chars, uppercase, lowercase, digit"""
+        return bool(re.match(cls.PASSWORD_PATTERN, password))
+
+    @classmethod
+    def extract_mentions(cls, text: str) -> list:
+        """Extract @mentions from text"""
+        return re.findall(r'@(\w+)', text)
+
+# Usage
+print(InputValidator.validate_email("alice@example.com"))  # True
+print(InputValidator.validate_password("Secure123"))       # True
+print(InputValidator.extract_mentions("Hello @alice and @bob!"))
+# ['alice', 'bob']
+```
+
+---
+
+## 11. Advanced Itertools
+
+### itertools - Powerful Iteration Tools
+
+```python
+from itertools import (
+    chain, combinations, permutations,
+    groupby, islice, cycle, repeat
+)
+
+# Chain - flatten multiple iterables
+list1 = [1, 2, 3]
+list2 = [4, 5, 6]
+combined = list(chain(list1, list2))  # [1, 2, 3, 4, 5, 6]
+
+# Combinations - unique pairs
+pairs = list(combinations([1, 2, 3, 4], 2))
+# [(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)]
+
+# Permutations - all orderings
+perms = list(permutations([1, 2, 3], 2))
+# [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]
+
+# Groupby - group consecutive items
+data = [1, 1, 2, 2, 2, 3, 1, 1]
+groups = [(k, list(g)) for k, g in groupby(data)]
+# [(1, [1, 1]), (2, [2, 2, 2]), (3, [3]), (1, [1, 1])]
+
+# Islice - slice iterator
+numbers = range(100)
+first_10 = list(islice(numbers, 10))  # [0, 1, ..., 9]
+
+# Cycle - repeat infinitely
+counter = cycle([1, 2, 3])
+# next(counter) -> 1, 2, 3, 1, 2, 3, ...
+```
+
+**Real-World: Task scheduler with round-robin**
+
+```python
+from itertools import cycle, islice
+from typing import List
+
+class RoundRobinScheduler:
+    def __init__(self, workers: List[str]):
+        self.workers = cycle(workers)  # Infinite cycle
+
+    def assign_tasks(self, tasks: List[str]) -> dict:
+        """Assign tasks to workers in round-robin"""
+        assignments = {}
+        for task in tasks:
+            worker = next(self.workers)
+            if worker not in assignments:
+                assignments[worker] = []
+            assignments[worker].append(task)
+        return assignments
+
+# Usage
+scheduler = RoundRobinScheduler(["Worker-1", "Worker-2", "Worker-3"])
+tasks = [f"Task-{i}" for i in range(10)]
+result = scheduler.assign_tasks(tasks)
+
+for worker, assigned in result.items():
+    print(f"{worker}: {assigned}")
+# Worker-1: ['Task-0', 'Task-3', 'Task-6', 'Task-9']
+# Worker-2: ['Task-1', 'Task-4', 'Task-7']
+# Worker-3: ['Task-2', 'Task-5', 'Task-8']
+```
+
+---
+
+## 12. Modern Python Features (3.8+)
+
+### Walrus Operator (:=)
+
+```python
+# OLD - compute twice
+data = get_data()
+if len(data) > 10:
+    process(data)
+
+# NEW - compute once with walrus
+if (n := len(get_data())) > 10:
+    print(f"Processing {n} items")
+    process(data)
+
+# In while loops
+while (line := file.readline()):
+    process(line)
+```
+
+**Real-World: Validation with computed values**
+
+```python
+class OrderValidator:
+    def validate_order(self, order: dict) -> tuple[bool, str]:
+        """Validate order and return result with message"""
+
+        # Check stock with walrus operator
+        if (available := self.check_stock(order["product_id"])) < order["quantity"]:
+            return False, f"Insufficient stock: {available} available"
+
+        # Check price
+        if (price := self.get_price(order["product_id"])) != order["price"]:
+            return False, f"Price mismatch: expected {price}"
+
+        return True, "Order valid"
+
+    def check_stock(self, product_id: str) -> int:
+        return 5
+
+    def get_price(self, product_id: str) -> float:
+        return 99.99
+```
+
+### Unpacking Operators (* and **)
+
+```python
+# Unpack lists
+numbers = [1, 2, 3]
+print(*numbers)  # 1 2 3 (instead of [1, 2, 3])
+
+# Merge lists
+list1 = [1, 2]
+list2 = [3, 4]
+merged = [*list1, *list2]  # [1, 2, 3, 4]
+
+# Unpack dicts
+dict1 = {"a": 1, "b": 2}
+dict2 = {"c": 3, "d": 4}
+merged = {**dict1, **dict2}  # {'a': 1, 'b': 2, 'c': 3, 'd': 4}
+
+# Override values
+defaults = {"timeout": 30, "retry": 3}
+custom = {"timeout": 60}
+config = {**defaults, **custom}  # {'timeout': 60, 'retry': 3}
+```
+
+**Real-World: API request builder**
+
+```python
+class APIClient:
+    def __init__(self, base_url: str, default_headers: dict = None):
+        self.base_url = base_url
+        self.default_headers = default_headers or {}
+
+    def request(self, endpoint: str, **kwargs):
+        """Make request with default + custom headers"""
+        # Merge default and custom headers
+        headers = {**self.default_headers, **kwargs.get("headers", {})}
+
+        # Build final config
+        config = {
+            "url": f"{self.base_url}{endpoint}",
+            "headers": headers,
+            **kwargs  # Include other params (timeout, etc.)
+        }
+
+        return config
+
+# Usage
+client = APIClient(
+    "https://api.example.com",
+    default_headers={"Authorization": "Bearer token123"}
+)
+
+response = client.request(
+    "/users",
+    headers={"Content-Type": "application/json"},
+    timeout=30
+)
+```
+
+---
+
+## 13. Quick Reference: When to Use What
+
+### Decision Guide
+
+| Need | Use | Example |
+|------|-----|---------|
+| Count/Group items | `Counter`, `defaultdict` | Frequency count, group by key |
+| Fast queue operations | `deque` | Request queue, sliding window |
+| Cache expensive calls | `@lru_cache` | API calls, computations |
+| Clean data objects | `@dataclass` | Domain models, DTOs |
+| Memory efficient iteration | Generators | Large files, infinite streams |
+| Transform collections | Comprehensions | Filter, map lists/dicts |
+| Multiple arguments | `*args`, `**kwargs` | Flexible functions |
+| Sort/Filter | `sorted()`, `filter()`, `lambda` | Custom sorting, filtering |
+| Validate | `any()`, `all()` | Check conditions |
+| Pattern matching | `re` (regex) | Email, phone validation |
+| Priority ordering | `heapq` | Task scheduling |
+| Round-robin | `itertools.cycle` | Load balancing |
+| Combinations | `itertools.combinations` | Test cases |
+
+### Common Interview Patterns
+
+```python
+# Pattern 1: Frequency count
+from collections import Counter
+freq = Counter(items)
+most_common = freq.most_common(k)
+
+# Pattern 2: Group by key
+from collections import defaultdict
+groups = defaultdict(list)
+for item in items:
+    groups[item.key].append(item)
+
+# Pattern 3: Sliding window
+from collections import deque
+window = deque(maxlen=k)
+for item in items:
+    window.append(item)
+
+# Pattern 4: LRU Cache
+from functools import lru_cache
+@lru_cache(maxsize=128)
+def expensive_function(n):
+    ...
+
+# Pattern 5: Priority queue
+import heapq
+heap = []
+heapq.heappush(heap, (priority, item))
+next_item = heapq.heappop(heap)
+
+# Pattern 6: Validation
+all(condition(x) for x in items)  # All must pass
+any(condition(x) for x in items)  # At least one passes
+
+# Pattern 7: Transform and filter
+result = [transform(x) for x in items if condition(x)]
+
+# Pattern 8: Merge dicts
+merged = {**defaults, **overrides}
+
+# Pattern 9: Parse structured data
+first, *middle, last = items
+
+# Pattern 10: Compute once, use many times
+if (result := expensive_computation()) > threshold:
+    use(result)
+```
+
+---
+
+**📚 Related Topics:**
+- [OOP Fundamentals](./03-oop-fundamentals/) - Classes and objects
+- [Design Patterns](./06-design-patterns/) - Common patterns
+- [Async Patterns](./async-patterns.md) - Concurrency
+- [Special Methods](./03-oop-fundamentals/special-methods.md) - Dunder methods
+
+---
+
+**Back to:** [Main README](./README.md) | [Learning Guide](./LEARNING-GUIDE.md)
+
+---
+
+## 14. Common LLD Patterns
 
 ### Singleton Pattern (Pythonic Way)
 
@@ -820,7 +1387,7 @@ order = Order("O123")
 print(order.status)  # OrderStatus.PENDING
 ```
 
-### Chaining Operations
+### Method Chaining (Fluent Interface)
 
 ```python
 class QueryBuilder:
@@ -863,65 +1430,3 @@ print(query)
 # SELECT * FROM table WHERE age > 18 AND status = 'active' ORDER BY created_at LIMIT 10
 ```
 
----
-
-## 🎯 Interview Tips
-
-### Quick Decision Guide
-
-**Need to count/group?** → `Counter`, `defaultdict`
-**Need fast queue?** → `deque`
-**Transform list/dict?** → Comprehensions
-**Memory efficiency?** → Generators
-**Cache results?** → `@lru_cache`
-**Clean objects?** → `@dataclass`
-**Resource management?** → Context managers (`with`)
-**Multiple arguments?** → `*args`, `**kwargs`
-
-### Common Interview Patterns
-
-```python
-# Pattern 1: Frequency count
-from collections import Counter
-freq = Counter(items)
-most_common = freq.most_common(k)
-
-# Pattern 2: Group by key
-from collections import defaultdict
-groups = defaultdict(list)
-for item in items:
-    groups[item.key].append(item)
-
-# Pattern 3: LRU Cache
-from functools import lru_cache
-@lru_cache(maxsize=128)
-def expensive_function(n):
-    ...
-
-# Pattern 4: Sliding window with deque
-from collections import deque
-window = deque(maxlen=k)
-for item in items:
-    window.append(item)
-    # Process window
-
-# Pattern 5: Dataclass for clean models
-from dataclasses import dataclass
-@dataclass
-class Entity:
-    id: str
-    name: str
-```
-
----
-
-## 📚 Related Topics
-
-- [OOP Fundamentals](./03-oop-fundamentals/) - Classes and objects
-- [Design Patterns](./06-design-patterns/) - Common patterns
-- [Async Patterns](./async-patterns.md) - Concurrency
-- [Special Methods](./03-oop-fundamentals/special-methods.md) - Dunder methods
-
----
-
-**Back to:** [Main README](./README.md) | [Learning Guide](./LEARNING-GUIDE.md)
