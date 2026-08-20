@@ -1,16 +1,67 @@
-# System Design - Performance Antipatterns
+# System Design - Patterns & Antipatterns
 
-A comprehensive guide to common performance antipatterns with practical examples and solutions.
+A comprehensive guide to cloud design patterns and common performance antipatterns with practical Python and Go examples.
 
-## 🎯 Purpose
+## 📋 Contents
 
-This repository demonstrates common performance antipatterns found in distributed systems and web applications, along with proper solutions. Each antipattern includes:
-- **Problem Description**: What the antipattern is and why it's problematic
-- **Code Examples**: Bad implementation demonstrating the antipattern
-- **Solution**: Proper implementation with best practices
-- **Benchmarks**: Performance comparisons where applicable
+1. **[Design Patterns](./design-patterns/)** - Learn cloud design patterns (Ambassador, Gateway, CQRS, etc.)
+2. **[Performance Antipatterns](./anti-patterns/)** - Avoid common performance pitfalls
+3. **[Low-Level Design](./low-level-design/)** - System design interviews and implementations
 
-## 📚 Antipatterns Covered
+---
+
+## 🎨 Design Patterns
+
+**Location**: [`design-patterns/`](./design-patterns/)
+
+Learn cloud design patterns with real-world Python examples inspired by [Microsoft Azure Architecture Patterns](https://learn.microsoft.com/en-us/azure/architecture/patterns/).
+
+### ✅ Currently Available
+
+#### 1. **[Ambassador Pattern](./design-patterns/01-ambassador/)**
+Centralize common client connectivity tasks like retry logic, circuit breaking, logging, and monitoring.
+
+**Use when**: Multiple services call external APIs and need consistent behavior
+
+**Real-world example**: E-commerce app with 20 microservices calling payment, shipping, and notification APIs
+
+**Quick start**:
+```bash
+cd design-patterns/01-ambassador
+python demo/mock_api.py        # Terminal 1
+python demo/run_demo.py         # Terminal 2
+```
+
+#### 2. **[Anti-Corruption Layer](./design-patterns/02-anti-corruption-layer/)**
+Isolate your clean domain model from external systems with different semantics. Translate between legacy/external formats and your modern domain.
+
+**Use when**: Integrating with legacy systems or badly designed external APIs
+
+**Real-world example**: Modern app integrating with 20-year-old mainframe using cryptic codes and weird date formats
+
+**Quick start**:
+```bash
+cd design-patterns/02-anti-corruption-layer
+python demo/mock_legacy_system.py  # Terminal 1
+python demo/run_demo.py            # Terminal 2
+```
+
+### 🚧 Coming Soon
+- Gateway Aggregation
+- Gateway Offloading
+- Circuit Breaker
+- Cache-Aside
+- CQRS
+- Event Sourcing
+- And more...
+
+**[📖 View All Patterns →](./design-patterns/README.md)**
+
+---
+
+## ⚠️ Performance Antipatterns
+
+**Location**: [`anti-patterns/`](./anti-patterns/)
 
 ### 1. [Improper Instantiation](./01-improper-instantiation/)
 Creating expensive objects repeatedly instead of reusing them. Examples: database connections, HTTP clients, regex patterns.
@@ -64,12 +115,35 @@ Performing heavy computation or logic in the client/frontend layer.
 
 ## 🛠️ Technology Stack
 
-- **Primary**: Go (golang) - for most examples
-- **Secondary**: Java Spring Boot, Python FastAPI - for specific patterns where they're particularly illustrative
-- **Tools**: Docker, Docker Compose (for databases/infrastructure)
+### Design Patterns
+- **Primary**: Python 3.11+ (with Flask, requests)
+- **Infrastructure**: Docker (for mock services)
+
+### Performance Antipatterns
+- **Primary**: Go 1.21+ (for performance-critical examples)
+- **Secondary**: Java Spring Boot, Python FastAPI
+- **Infrastructure**: Docker, Docker Compose, PostgreSQL, Redis
 
 ## 📖 How to Use This Repository
 
+### Design Patterns
+Each pattern directory contains:
+```
+pattern-name/
+├── README.md              # Pattern explanation
+├── QUICKSTART.md          # Quick start guide
+├── without_pattern/       # Problem (code without pattern)
+│   └── main.py
+├── with_pattern/          # Solution (code with pattern)
+│   └── main.py
+├── demo/                  # Interactive demonstration
+│   ├── mock_api.py
+│   └── run_demo.py
+└── benchmarks/            # Performance comparison
+    └── benchmark.py
+```
+
+### Performance Antipatterns
 Each antipattern directory contains:
 ```
 antipattern-name/
@@ -82,46 +156,68 @@ antipattern-name/
 
 ### Running Examples
 
-1. Navigate to the antipattern directory:
+#### Design Patterns (Python)
 ```bash
-cd 01-improper-instantiation
+# Navigate to pattern directory
+cd design-patterns/01-ambassador
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Terminal 1: Start mock API
+python demo/mock_api.py
+
+# Terminal 2: Run demo
+python demo/run_demo.py
+
+# Run benchmarks
+python benchmarks/benchmark.py
 ```
 
-2. Read the README for context
-
-3. Run the bad example:
+#### Performance Antipatterns (Go)
 ```bash
+# Navigate to antipattern directory
+cd anti-patterns/01-improper-instantiation
+
+# Read the README
+cat README.md
+
+# Run bad example
 cd bad && go run main.go
-```
 
-4. Run the good example:
-```bash
-cd good && go run main.go
-```
+# Run good example
+cd ../good && go run main.go
 
-5. Run benchmarks:
-```bash
-cd benchmarks && go test -bench=. -benchmem
+# Run benchmarks
+cd ../benchmarks && go test -bench=. -benchmem
 ```
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Go 1.21+
-- Docker & Docker Compose
+- **Python 3.11+** (for design patterns)
+- **Go 1.21+** (for performance antipatterns)
+- **Docker & Docker Compose** (for infrastructure)
 - (Optional) Java 17+ for Spring Boot examples
-- (Optional) Python 3.11+ for FastAPI examples
+- (Optional) FastAPI for Python API examples
 
 ### Quick Start
-```bash
-# Clone and enter directory
-cd system-design
 
+#### Design Patterns
+```bash
+cd design-patterns/01-ambassador
+pip install -r requirements.txt
+python demo/mock_api.py        # Terminal 1
+python demo/run_demo.py         # Terminal 2
+```
+
+#### Performance Antipatterns
+```bash
 # Start infrastructure (databases, cache, etc.)
 docker-compose up -d
 
-# Run any example
-cd 01-improper-instantiation/bad
+# Run any antipattern example
+cd anti-patterns/01-improper-instantiation/bad
 go run main.go
 ```
 
