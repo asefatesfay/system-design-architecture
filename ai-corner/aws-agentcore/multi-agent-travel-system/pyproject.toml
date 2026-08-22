@@ -1,0 +1,26 @@
+[project]
+name = "multi-agent-travel-system"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Assefa Tesfay", email = "assefa.tesfay@nordstrom.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=1.0.0",
+    "bedrock-agentcore>=1.22.0",
+    "boto3>=1.43.78",
+    "botocore>=1.43.78",
+    "openai>=3.3.1",
+    "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
+    "strands-agents>=1.53.0",
+]
+
+[project.scripts]
+multi-agent-travel-system = "multi_agent_travel_system:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"

@@ -8,7 +8,8 @@ app = BedrockAgentCoreApp()
 # Set AWS profile via environment variable if not already set
 # The Agent will use this when creating its internal boto3 session
 if 'AWS_PROFILE' not in os.environ:
-    os.environ['AWS_PROFILE'] = 'admin-user'
+    print("AWS_PROFILE not set")
+    exit(1)
 
 # Set AWS region for Bedrock
 os.environ['AWS_DEFAULT_REGION'] = 'us-west-2'
