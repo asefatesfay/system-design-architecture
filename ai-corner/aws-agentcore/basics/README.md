@@ -176,6 +176,242 @@ The AI agent that:
 - Executes tool calls
 - Streams responses
 
+## Core AgentCore Concepts
+
+### 1. Runtime
+
+**What it is**: The execution environment where your agent runs (local, Lambda, ECS, etc.)
+
+**Real-world examples**:
+- **Local Development**: Running `uv run main.py` on your laptop for testing
+- **AWS Lambda**: Deploy your agent as a serverless function that scales automatically
+  ```python
+  # Lambda automatically handles requests
+  # No need to manage servers
+  # Pay only for actual invocations
+  ```
+- **ECS/Fargate**: Run as a container for long-running agents that need persistent connections
+- **EC2**: Full control for specialized hardware requirements (GPUs for local models)
+
+**Use case**: A customer service agent deployed on Lambda that handles 10 requests/day costs pennies, but can instantly scale to 10,000 requests during a sale event.
+
+### 2. Gateway
+
+**What it is**: The entry point that routes requests to your agent and handles API management
+
+**Real-world examples**:
+- **API Gateway Integration**:
+  ```
+  Customer → API Gateway → Lambda (Agent) → Bedrock → Response
+  ```
+- **Authentication**: Gateway validates API keys before reaching your agent
+- **Rate Limiting**: Prevents abuse (e.g., max 100 requests/minute per user)
+- **Request Transformation**: Converts webhook payloads to agent-friendly format
+  ```python
+  # Slack webhook → Gateway transforms → Agent processes
+  {"text": "Book meeting"} → {"prompt": "Book meeting", "user_id": "U123"}
+  ```
+
+**Use case**: A Slack bot where the Gateway receives Slack events, validates the workspace token, transforms the payload, and routes to your agent.
+
+### 3. Memory
+
+**What it is**: How agents remember context across conversations and sessions
+
+**Real-world examples**:
+- **Short-term Memory (Conversation Context)**:
+  ```python
+  User: "Book a flight to Paris"
+  Agent: "When would you like to travel?"
+  User: "Next Monday"  # Agent remembers we're booking to Paris
+  ```
+
+- **Long-term Memory (DynamoDB/Redis)**:
+  ```python
+  # Agent remembers user preferences across sessions
+  user_preferences = {
+      "user_id": "123",
+      "preferred_airline": "Delta",
+      "seat_preference": "aisle",
+      "dietary": "vegetarian"
+  }
+  # Next time user books, agent suggests Delta aisle seats
+  ```
+
+- **Shared Memory (Team Knowledge)**:
+  ```python
+  # Support agent remembers all past issues for a customer
+  agent.recall("What issues has customer #456 reported?")
+  # Returns: [printer issue, login problem, billing question]
+  ```
+
+**Use case**: A medical assistant that remembers patient allergies, medications, and past visits across multiple appointments.
+
+### 4. Identity
+
+**What it is**: Authentication and authorization - knowing WHO is using the agent and WHAT they can do
+
+**Real-world examples**:
+- **User Authentication**:
+  ```python
+  @app.entrypoint
+  def invoke(payload, context):
+      user_id = context.identity.user_id
+      role = context.identity.role  # "admin", "user", "guest"
+
+      if role == "admin":
+          # Can access all data
+          return process_admin_request(payload)
+      else:
+          # Can only access own data
+          return process_user_request(payload, user_id)
+  ```
+
+- **OAuth/SSO Integration**:
+  ```
+  User logs in via Google → Token validated → Agent knows user's email, name, permissions
+  ```
+
+- **Multi-tenant Isolation**:
+  ```python
+  # Company A's agent can't access Company B's data
+  tenant_id = context.identity.tenant_id
+  data = database.query(tenant_id=tenant_id)
+  ```
+
+**Use case**: A corporate HR assistant where managers can query all team data, but employees only see their own payroll and vacation info.
+
+### 5. Tools
+
+**What it is**: External capabilities agents can use (APIs, databases, code execution)
+
+**Real-world examples**:
+- **Database Query Tool**:
+  ```python
+  @app.tool
+  def get_order_status(order_id: str):
+      """Check order status in database"""
+      return db.query("SELECT status FROM orders WHERE id = ?", order_id)
+
+  # Agent: "Let me check that order for you..."
+  # Agent calls: get_order_status("ORD-123")
+  # Agent: "Your order is out for delivery!"
+  ```
+
+- **API Integration Tool**:
+  ```python
+  @app.tool
+  def search_flights(origin: str, destination: str, date: str):
+      """Search available flights"""
+      response = requests.get(f"https://api.flights.com/search", params={...})
+      return response.json()
+  ```
+
+- **Code Execution Tool**:
+  ```python
+  @app.tool
+  def run_analysis(data: list):
+      """Run statistical analysis"""
+      import pandas as pd
+      df = pd.DataFrame(data)
+      return df.describe().to_dict()
+  ```
+
+- **Multi-step Tool Chain**:
+  ```python
+  # Agent orchestrates multiple tools:
+  # 1. search_flights("NYC", "LAX", "2024-03-15")
+  # 2. check_price_history("NYC-LAX")
+  # 3. book_flight(flight_id="FL123")
+  # 4. send_confirmation_email(user_email)
+  ```
+
+**Use case**: A DevOps agent that uses tools to check server health, query logs, restart services, and post alerts to Slack - all without human intervention.
+
+### 6. Observability
+
+**What it is**: Monitoring, logging, and tracing to understand what your agent is doing
+
+**Real-world examples**:
+- **Structured Logging**:
+  ```json
+  {
+    "timestamp": "2024-03-15T10:30:00Z",
+    "level": "INFO",
+    "message": "Agent invoked",
+    "user_id": "user-123",
+    "prompt": "Book flight to Paris",
+    "duration_ms": 1250,
+    "tokens_used": 450,
+    "cost": 0.0023
+  }
+  ```
+
+- **Distributed Tracing** (see the full flow):
+  ```
+  Request arrives
+  ├─ Gateway validates (12ms)
+  ├─ Agent receives prompt (5ms)
+  ├─ Call Bedrock API (800ms)
+  │  └─ Model inference (750ms)
+  ├─ Execute tool: search_flights (400ms)
+  │  └─ External API call (380ms)
+  ├─ Call Bedrock again (600ms)
+  └─ Return response (8ms)
+  Total: 1825ms
+  ```
+
+- **Metrics Dashboard**:
+  ```
+  - Total requests today: 1,247
+  - Average response time: 1.2s
+  - Error rate: 0.3%
+  - Top tools used: search_flights (402), get_order_status (201)
+  - Cost today: $12.34
+  ```
+
+- **Error Tracking**:
+  ```python
+  # When something breaks, you see:
+  {
+    "error": "ConnectionTimeout",
+    "message": "Database connection timed out after 30s",
+    "stack_trace": "...",
+    "context": {
+      "user_id": "123",
+      "tool": "get_order_status",
+      "order_id": "ORD-456"
+    }
+  }
+  ```
+
+- **Real-time Monitoring**:
+  ```python
+  # CloudWatch alerts you when:
+  # - Response time > 3 seconds
+  # - Error rate > 5%
+  # - Daily cost > $100
+  # - A specific user making suspicious requests
+  ```
+
+**Use case**: When a customer complains "the bot didn't book my flight", you can trace the exact conversation, see which tool failed, view the error message, and fix the issue with complete context.
+
+## How They Work Together
+
+**Real-world scenario**: Customer service agent for an e-commerce platform
+
+1. **Gateway**: Customer sends message via website chatbot
+2. **Identity**: System identifies user (logged-in customer with order history)
+3. **Runtime**: Request routes to Lambda function running the agent
+4. **Memory**: Agent recalls customer's previous orders and preferences
+5. **Agent**: Claude processes "Where is my order?"
+6. **Tools**: Agent calls `get_order_status(order_id="ORD-789")`
+7. **Tools**: Agent calls `get_tracking_info(tracking_number="1Z999")`
+8. **Observability**: Logs show: request time, tokens used, tools called, response time
+9. **Response**: "Your order is out for delivery, expected by 5 PM today"
+
+All of this happens in ~2 seconds, fully traced, logged, and monitored.
+
 ### Model IDs and Inference Profiles
 
 **Important**: Use cross-region inference profiles for better availability:
