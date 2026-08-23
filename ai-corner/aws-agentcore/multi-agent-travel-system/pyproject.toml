@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
     "strands-agents>=1.53.0",
+    "strands-agents-tools>=0.8.6",
 ]
 
 [project.scripts]
