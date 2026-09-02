@@ -1,0 +1,19 @@
+[project]
+name = "aws-bedrock-tutorial"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Assefa Tesfay", email = "assefa.tesfay@nordstrom.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "boto3>=1.43.83",
+]
+
+[project.scripts]
+aws-bedrock-tutorial = "aws_bedrock_tutorial:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
