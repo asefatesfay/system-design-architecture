@@ -3,7 +3,7 @@ import json
 import os
 import boto3
 
-def get_weather(location, unit="fernheit"):
+def get_weather(location, unit="fahrenheit"):
     """
     Simulate a weather API call to get the current weather for a given location.
     """
@@ -14,26 +14,40 @@ def get_weather(location, unit="fernheit"):
         "condition": "Sunny",
         "humidity": 50
     }
-    return json.dumps(weather_data)
+    return weather_data
+
+# ---------------------------------------------------------------------------
+# Step 2: Describe your functions as "tools" for the model
+# ---------------------------------------------------------------------------
+# The model needs a description of each tool so it knows:
+#   - What the tool does (description)
+#   - What inputs it expects (inputSchema)
+#
+# This is like writing documentation so someone else can use your function.
 
 TOOL_CONFIG = {
-    "tools":[
+    "tools": [
         {
             "toolSpec": {
                 "name": "get_weather",
                 "description": "Get the current weather for a given location.",
-                "parameters": {
-                    "location": {
-                        "type": "string",
-                        "description": "The location to get the weather for."
-                    },
-                    "unit": {
-                        "type": "string",
-                        "description": "The unit of temperature (fahrenheit or celsius).",
-                        "default": "fahrenheit"
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "The city and state, e.g. 'San Francisco, CA'",
+                            },
+                            "unit": {
+                                "type": "string",
+                                "enum": ["fahrenheit", "celsius"],
+                                "description": "Temperature unit (default: fahrenheit)",
+                            },
+                        },
+                        "required": ["location"],
                     }
                 },
-                "required": ["location"]
             }
         }
     ]
