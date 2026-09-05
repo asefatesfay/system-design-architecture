@@ -1,0 +1,20 @@
+[project]
+name = "basic-strands-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Assefa Tesfay", email = "assefa.tesfay@nordstrom.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "strands-agents>=1.54.0",
+    "strands-agents-tools>=0.8.8",
+]
+
+[project.scripts]
+basic-strands-agent = "basic_strands_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
